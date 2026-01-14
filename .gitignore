@@ -1,0 +1,138 @@
+# ==========================
+# Python
+# ==========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ==========================
+# Virtual Environments
+# ==========================
+venv/
+.venv/
+env/
+.env/
+ENV/
+.conda/
+conda-env/
+
+# ==========================
+# IDE / Editors
+# ==========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ==========================
+# Jupyter Notebooks
+# ==========================
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
+
+# ==========================
+# Model Checkpoints & Weights
+# ==========================
+checkpoints/*
+!checkpoints/.gitkeep
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.h5
+
+# ==========================
+# Outputs & Logs
+# ==========================
+outputs/comparison/*
+outputs/evaluation/*
+outputs/logs/*
+outputs/qualitative/*
+!outputs/**/.gitkeep
+!outputs/splits/
+!outputs/splits/data_splits.json
+*.log
+logs/
+lightning_logs/
+wandb/
+mlruns/
+tensorboard_logs/
+
+# ==========================
+# Data & Cache
+# ==========================
+*.csv
+!outputs/splits/*.json
+.cache/
+*.cache
+huggingface/
+~/.cache/
+
+# ==========================
+# Environment Variables
+# ==========================
+.env
+.env.local
+.env.*.local
+*.env
+
+# ==========================
+# OS Generated Files
+# ==========================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ==========================
+# Testing & Coverage
+# ==========================
+.coverage
+.tox/
+.nox/
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ==========================
+# SLURM Job Outputs (keep .slurm scripts)
+# ==========================
+slurm-*.out
+!*.slurm
+
+# ==========================
+# Temporary Files
+# ==========================
+*.tmp
+*.temp
+*.bak
+*.backup

@@ -1,0 +1,40 @@
+# Training Configuration
+
+# Data
+batch_size: 16
+num_workers: 4
+projection_type: 'Frontal'  # 'Frontal', 'Lateral', or null for all
+
+# Training
+num_epochs: 1
+learning_rate: 1e-4
+weight_decay: 0.01
+warmup_steps: 500
+gradient_accumulation_steps: 1
+max_grad_norm: 1.0
+
+# Model
+peft_method: 'lora'  # 'lora' or 'qlora'
+temperature: 0.07  # Contrastive loss temperature
+
+# Optimization
+optimizer: 'adamw'
+scheduler: 'cosine'
+
+# Mixed Precision
+use_amp: true
+
+# Checkpointing
+save_every_n_epochs: 1
+keep_best_n_checkpoints: 3
+
+# Logging
+log_every_n_steps: 10
+use_wandb: false
+
+# Text
+max_text_length: 64
+
+# Seed
+seed: 42
+
