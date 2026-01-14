@@ -1,236 +1,182 @@
-# Medical-SigLIP: Fine-Tuning with PEFT for Medical Image Understanding
+# CheXQuery-MedVLM
 
-**Built with PyTorch Lightning**
+**Anatomical Region-Guided Medical Vision-Language Model for Chest X-ray Report Generation**
 
-This project implements parameter-efficient fine-tuning (PEFT) of Medical-SigLIP using LoRA and QLoRA for medical image-text alignment, integrated with BioGPT for automated radiology report generation. All training and evaluation uses PyTorch Lightning for clean, scalable, and production-ready code.
+A novel architecture featuring CheXbert-initialized condition queries and anatomical region queries for high-quality, structured medical report generation.
 
-## Project Overview
+## 🔬 Architecture Highlights
 
-The project fine-tunes a vision-language model (SigLIP) on chest X-ray images and their corresponding radiology reports using parameter-efficient methods (LoRA and QLoRA). The fine-tuned encoder is then integrated with BioGPT to generate medical impressions from X-ray images.
+### Novel Contributions
+1. **CheXbert-Initialized Condition Queries**: 14 learnable queries initialized from BioBERT embeddings of CheXbert conditions, providing pathology-aware visual attention
+2. **Anatomical Region Queries**: 6 learnable queries for spatial grounding of cardiac, lung, mediastinum, diaphragm, and spine regions
+3. **Gated Fusion with Query Pooling**: Adaptive balance between global (CLS) and local (query) visual information
+4. **Multi-task Learning**: Joint generation and auxiliary CheXbert classification for clinical accuracy
 
-### Key Features
-
-- **PyTorch Lightning Architecture**: All code follows Lightning best practices with LightningModule and LightningDataModule
-- **Parameter-Efficient Fine-Tuning**: Implements both LoRA and QLoRA for efficient adaptation of large models
-- **Contrastive Learning**: Aligns X-ray images with medical text using contrastive loss
-- **Medical Report Generation**: Generates clinical impressions using BioGPT
-- **Comprehensive Evaluation**: BLEU, ROUGE, METEOR, and cosine similarity metrics
-- **LoRA vs QLoRA Comparison**: Side-by-side comparison with automatic profiling
-- **Automatic Multi-GPU**: Seamless distributed training support via Lightning
-- **Built-in Callbacks**: ModelCheckpoint, EarlyStopping, LearningRateMonitor
-
-## Dataset
-
-**IU-Xray Dataset**
-- 3,851 unique chest X-ray cases
-- 7,470 images (Frontal and Lateral projections)
-- Detailed radiology reports with findings and impressions
-- Downloaded automatically via Kaggle Hub
-
-## Installation
-
-### 1. Create Virtual Environment
-
-```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+### Architecture Overview
+```
+Image → SigLIP (LoRA) → Patch Tokens (576)
+                              ↓
+    [Condition Queries (14)] + [Anatomical Queries (6)]
+                              ↓
+                    Cross-Attention (2 layers)
+                              ↓
+                    Gated Fusion + Query Pooling
+                              ↓
+                    Visual Tokens (11 = 1 CLS + 10 pooled)
+                              ↓
+                    Flan-T5 Decoder (LoRA)
+                              ↓
+        Findings: [text] | Impression: [text]
 ```
 
-### 2. Install Dependencies
+## 🚀 Quick Start
+
+### Installation
 
 ```bash
+# Clone repository
+git clone <repository-url>
+cd chexquery-medvlm
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# or: venv\Scripts\activate  # Windows
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Download NLTK Data
+### Prepare Data
 
 ```bash
-python -c "import nltk; nltk.download('punkt'); nltk.download('wordnet')"
+# Download dataset and create splits
+python main.py prepare --splits-file outputs/splits/data_splits.json
 ```
 
-## Project Structure
-
-```
-visualTextHealth/
-├── data/                   # Data loading (Lightning DataModules)
-│   ├── dataset.py         # PyTorch datasets
-│   ├── datamodule.py      # LightningDataModule
-│   └── split.py           # Train/val/test splitting
-├── models/                 # Model architectures (LightningModules)
-│   ├── medical_siglip_lightning.py  # SigLIP LightningModule
-│   ├── full_pipeline_lightning.py   # Full pipeline LightningModule
-│   ├── peft_config.py     # PEFT configurations
-│   ├── projection.py      # Projection layer
-│   └── biogpt_generator.py # BioGPT integration
-├── train/                  # Training scripts (Lightning Trainer)
-│   ├── train_siglip_lightning.py    # SigLIP training
-│   ├── train_full_lightning.py      # Full pipeline training
-│   └── train_config.yaml  # Hyperparameters
-├── eval/                   # Evaluation scripts
-│   ├── metrics.py         # Evaluation metrics
-│   ├── evaluate_lightning.py        # Model evaluation
-│   └── qualitative_analysis_lightning.py # Visualizations
-├── experiments/            # Comparison experiments
-│   └── compare_lora_qlora_lightning.py # LoRA vs QLoRA
-├── utils/                  # Utility functions
-│   ├── config.py          # Global configuration
-│   ├── logger.py          # Logging setup
-│   ├── tokenizer_utils.py # Text preprocessing
-│   └── checkpoint.py      # Model checkpointing
-├── main.py                 # Main CLI (uses Lightning Trainer)
-└── requirements.txt        # Dependencies (includes pytorch-lightning)
-```
-
-## Usage
-
-### 1. Prepare Data
+### Training
 
 ```bash
-python main.py prepare_data
+# Train all phases sequentially
+python main.py train --all-phases
+
+# Or train specific phase
+python main.py train --phase 1  # Query Alignment
+python main.py train --phase 2 --resume outputs/checkpoints/phase1/best.ckpt  # End-to-End
 ```
 
-This creates train/val/test splits at the patient level to prevent data leakage.
-
-### 2. Train SigLIP Encoder
-
-**Train with LoRA:**
-```bash
-python main.py train_siglip --peft_method lora --num_epochs 10
-```
-
-**Train with QLoRA:**
-```bash
-python main.py train_siglip --peft_method qlora --num_epochs 10
-```
-
-### 3. Train Full Pipeline
+### Evaluation
 
 ```bash
-python main.py train_full --siglip_checkpoint checkpoints/siglip_lora/best_model.pt
+python main.py evaluate --checkpoint outputs/checkpoints/phase2/best.ckpt
 ```
 
-This trains the projection layer and fine-tunes BioGPT while keeping the SigLIP encoder frozen.
-
-### 4. Evaluate Model
+### Generate Reports
 
 ```bash
-python main.py evaluate --checkpoint checkpoints/full_pipeline/best_model.pt --split test
+python main.py generate --checkpoint outputs/checkpoints/phase2/best.ckpt --images path/to/image.png
 ```
 
-### 5. Qualitative Analysis
+### Visualize Attention
 
 ```bash
-python main.py qualitative --checkpoint checkpoints/full_pipeline/best_model.pt --num_samples 10
+python main.py visualize --checkpoint outputs/checkpoints/phase2/best.ckpt --images path/to/image.png
 ```
 
-### 6. Compare LoRA vs QLoRA
+## 📁 Project Structure
 
-```bash
-python main.py compare
+```
+chexquery-medvlm/
+├── configs/                    # Configuration files
+│   ├── model_config.yaml       # Model architecture
+│   ├── train_config.yaml       # Training settings
+│   ├── data_config.yaml        # Data settings
+│   └── eval_config.yaml        # Evaluation settings
+├── data/                       # Data loading
+│   ├── dataset.py              # Dataset class
+│   ├── datamodule.py           # Lightning DataModule
+│   ├── preprocessing.py        # Text preprocessing
+│   └── augmentations.py        # Image augmentations
+├── models/                     # Model components
+│   ├── vision_encoder.py       # SigLIP encoder
+│   ├── condition_queries.py    # CheXbert-initialized queries
+│   ├── anatomical_queries.py   # Anatomical region queries
+│   ├── cross_attention.py      # Cross-attention module
+│   ├── gated_fusion.py         # Gated fusion + pooling
+│   ├── text_decoder.py         # Flan-T5 decoder
+│   ├── auxiliary_head.py       # Classification head
+│   └── chexquery_medvlm.py     # Full model integration
+├── training/                   # Training pipeline
+│   ├── lightning_module.py     # PyTorch Lightning module
+│   └── trainer.py              # Training orchestration
+├── evaluation/                 # Evaluation
+│   ├── metrics.py              # BLEU, ROUGE, METEOR, BERTScore, CheXbert
+│   └── evaluate.py             # Evaluation script
+├── visualization/              # Interpretability
+│   └── attention_viz.py        # Attention visualization
+├── scripts/                    # SLURM scripts
+│   ├── train_phase1.slurm
+│   ├── train_phase2.slurm
+│   ├── train_all.slurm
+│   └── evaluate.slurm
+├── outputs/                    # Results
+│   ├── checkpoints/
+│   ├── logs/
+│   ├── evaluation/
+│   └── visualizations/
+├── main.py                     # CLI entry point
+├── requirements.txt
+└── README.md
 ```
 
-This trains both methods and compares:
-- Training time
-- Memory usage (RAM and GPU)
-- Validation loss
-- Generates comparison plots
+## ⚙️ Configuration
 
-## Configuration
+### Model Configuration (`configs/model_config.yaml`)
 
-Edit `train/train_config.yaml` to customize hyperparameters:
+Key settings:
+- `vision_encoder.model_name`: SigLIP model variant
+- `condition_queries.num_queries`: Number of condition queries (14)
+- `anatomical_queries.num_queries`: Number of anatomical queries (6)
+- `cross_attention.num_layers`: Cross-attention layers (2)
+- `gated_fusion.num_pool_queries`: Pooled query tokens (10)
+- `text_decoder.model_name`: Flan-T5 variant
 
-```yaml
-# Data
-batch_size: 16
-projection_type: 'Frontal'  # 'Frontal', 'Lateral', or null
+### Training Configuration (`configs/train_config.yaml`)
 
-# Training
-num_epochs: 10
-learning_rate: 1e-4
-warmup_steps: 500
+Three-phase training:
+1. **Phase 1 (Query Alignment)**: Freeze vision encoder and decoder, train queries + cross-attention
+2. **Phase 2 (End-to-End)**: Fine-tune all with LoRA, joint loss
+3. **Phase 3 (Generation)**: Optional, focus on generation quality
 
-# Model
-peft_method: 'lora'  # 'lora' or 'qlora'
-temperature: 0.07
+## 📊 Expected Results
 
-# LoRA parameters are in utils/config.py
-```
+| Metric | Target | Description |
+|--------|--------|-------------|
+| BLEU-1 | ~0.45 | Unigram overlap |
+| BLEU-4 | ~0.22 | 4-gram overlap |
+| ROUGE-L | ~0.48 | Longest common subsequence |
+| METEOR | ~0.40 | Semantic matching |
+| BERTScore F1 | ~0.91 | Contextual similarity |
+| CheXbert F1 | ~0.52 | Clinical accuracy |
 
-## Evaluation Metrics
+## 🔧 Hardware Requirements
 
-The project computes the following metrics:
+- **GPU**: NVIDIA A5000 (24GB) or equivalent
+- **Memory**: 64GB RAM recommended
+- **Storage**: ~50GB for data and checkpoints
 
-- **BLEU (1-4)**: N-gram overlap with reference reports
-- **ROUGE (1, 2, L)**: Recall-oriented metrics
-- **METEOR**: Considers synonyms and stemming
-- **Cosine Similarity**: Embedding alignment between images and text
+## 📚 Citation
 
-## Expected Results
-
-Based on the project goals:
-
-1. **Fine-tuned Medical-SigLIP**: Improved image-text alignment for chest X-rays
-2. **Automated Report Generation**: Clear, context-aware medical impressions
-3. **Efficiency Comparison**: QLoRA achieves comparable accuracy to LoRA with reduced memory and computation
-
-## Hardware Requirements
-
-**Minimum:**
-- GPU: NVIDIA GPU with 8GB VRAM (for LoRA)
-- RAM: 16GB
-- Storage: 20GB
-
-**Recommended:**
-- GPU: NVIDIA GPU with 16GB+ VRAM
-- RAM: 32GB
-- Storage: 50GB
-
-**For QLoRA:**
-- Can run on GPUs with as little as 6GB VRAM due to 4-bit quantization
-
-## Troubleshooting
-
-### Out of Memory Error
-- Reduce `batch_size` in config
-- Use QLoRA instead of LoRA
-- Enable gradient checkpointing
-- Use mixed precision training (enabled by default)
-
-### Slow Training
-- Increase `batch_size` if memory allows
-- Reduce `num_workers` in DataLoader
-- Use faster storage (SSD) for dataset
-
-### Dataset Not Found
-- Ensure kagglehub is installed
-- Check internet connection for dataset download
-- Verify dataset path in `utils/config.py`
-
-## Citation
-
-If you use this code, please cite the relevant papers:
+If you use this code, please cite:
 
 ```bibtex
-@article{hu2021lora,
-  title={LoRA: Low-Rank Adaptation of Large Language Models},
-  author={Hu, Edward J and Shen, Yelong and Wallis, Phillip and Allen-Zhu, Zeyuan and Li, Yuanzhi and Wang, Shean and Wang, Lu and Chen, Weizhu},
-  journal={arXiv preprint arXiv:2106.09685},
-  year={2021}
-}
-
-@article{dettmers2023qlora,
-  title={QLoRA: Efficient Finetuning of Quantized LLMs},
-  author={Dettmers, Tim and Pagnoni, Artidoro and Holtzman, Ari and Zettlemoyer, Luke},
-  journal={arXiv preprint arXiv:2305.14314},
-  year={2023}
+@article{chexquery2024,
+  title={CheXQuery-MedVLM: Anatomical Region-Guided Vision-Language Model for Chest X-ray Report Generation},
+  author={Your Name},
+  year={2024}
 }
 ```
 
-## License
+## 📄 License
 
-This project is for educational and research purposes.
-
-## Contact
-
-For questions or issues, please open an issue on the repository.
-
+MIT License - see LICENSE file for details.

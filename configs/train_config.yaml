@@ -1,0 +1,161 @@
+# ============================================
+# CheXQuery-MedVLM Training Configuration
+# ============================================
+
+# General
+seed: 42
+output_dir: "outputs"
+checkpoint_dir: "outputs/checkpoints"
+log_dir: "outputs/logs"
+
+# Phase 1: Query Alignment
+phase1:
+  name: "query_alignment"
+  epochs: 5
+  batch_size: 16
+  gradient_accumulation_steps: 2
+  effective_batch_size: 32
+  
+  # Frozen modules
+  freeze:
+    - "vision_encoder"
+    - "text_decoder"
+  
+  # Trainable modules
+  trainable:
+    - "condition_queries"
+    - "anatomical_queries"
+    - "cross_attention"
+    - "gated_fusion"
+    - "auxiliary_head"
+  
+  # Optimizer
+  optimizer:
+    type: "adamw"
+    lr: 1.0e-4
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+  
+  # Scheduler
+  scheduler:
+    type: "cosine_with_warmup"
+    warmup_steps: 200
+    min_lr: 1.0e-6
+  
+  # Loss weights
+  loss:
+    generation_weight: 1.0
+    auxiliary_weight: 0.5
+    label_smoothing: 0.0
+
+# Phase 2: End-to-End Fine-tuning
+phase2:
+  name: "end_to_end"
+  epochs: 15
+  batch_size: 8
+  gradient_accumulation_steps: 4
+  effective_batch_size: 32
+  
+  # Frozen modules
+  freeze:
+    - "vision_encoder.embeddings"
+  
+  # LoRA fine-tuning
+  lora_modules:
+    - "vision_encoder"
+    - "text_decoder"
+  
+  # Trainable modules
+  trainable:
+    - "condition_queries"
+    - "anatomical_queries"
+    - "cross_attention"
+    - "gated_fusion"
+    - "auxiliary_head"
+    - "projection"
+  
+  # Optimizer
+  optimizer:
+    type: "adamw"
+    lr: 5.0e-5
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+  
+  # Scheduler
+  scheduler:
+    type: "cosine_with_warmup"
+    warmup_steps: 500
+    min_lr: 1.0e-6
+  
+  # Loss weights
+  loss:
+    generation_weight: 1.0
+    auxiliary_weight: 0.3
+    label_smoothing: 0.1
+
+# Phase 3: Generation Fine-tuning (Optional)
+phase3:
+  name: "generation_finetuning"
+  enabled: false
+  epochs: 5
+  batch_size: 8
+  gradient_accumulation_steps: 4
+  effective_batch_size: 32
+  
+  # Frozen modules
+  freeze:
+    - "vision_encoder"
+    - "auxiliary_head"
+  
+  # Trainable modules
+  trainable:
+    - "condition_queries"
+    - "anatomical_queries"
+    - "cross_attention"
+    - "gated_fusion"
+    - "text_decoder"
+  
+  # Optimizer
+  optimizer:
+    type: "adamw"
+    lr: 2.0e-5
+    weight_decay: 0.01
+  
+  # Scheduler
+  scheduler:
+    type: "cosine"
+    min_lr: 1.0e-7
+  
+  # Loss weights
+  loss:
+    generation_weight: 1.0
+    auxiliary_weight: 0.0
+    label_smoothing: 0.1
+
+# Training settings
+training:
+  precision: "bf16-mixed"
+  gradient_clip_val: 1.0
+  gradient_checkpointing: true
+  num_workers: 4
+  pin_memory: true
+  
+  # Checkpointing
+  save_every_n_epochs: 1
+  save_top_k: 3
+  monitor_metric: "val_loss"
+  monitor_mode: "min"
+  
+  # Early stopping
+  early_stopping:
+    enabled: true
+    patience: 5
+    min_delta: 0.001
+  
+  # Logging
+  log_every_n_steps: 10
+  use_wandb: false
+  wandb_project: "chexquery-medvlm"
+

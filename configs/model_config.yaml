@@ -1,0 +1,91 @@
+# ============================================
+# CheXQuery-MedVLM Model Configuration
+# ============================================
+
+# Vision Encoder (SigLIP)
+vision_encoder:
+  model_name: "google/siglip-base-patch16-384"
+  image_size: 384
+  patch_size: 16
+  hidden_dim: 768
+  num_patches: 576  # (384/16)^2 = 24*24
+  freeze_embeddings: true
+  lora:
+    enabled: true
+    rank: 8
+    alpha: 16
+    dropout: 0.05
+    target_modules: ["q_proj", "v_proj"]
+
+# Condition Queries (CheXbert-initialized)
+condition_queries:
+  num_queries: 14
+  hidden_dim: 768
+  initialization: "biobert"  # Use BioBERT embeddings
+  biobert_model: "dmis-lab/biobert-base-cased-v1.2"
+  conditions:
+    - "no finding"
+    - "enlarged cardiomediastinum"
+    - "cardiomegaly"
+    - "lung opacity"
+    - "lung lesion"
+    - "edema"
+    - "consolidation"
+    - "pneumonia"
+    - "atelectasis"
+    - "pneumothorax"
+    - "pleural effusion"
+    - "pleural other"
+    - "fracture"
+    - "support devices"
+
+# Anatomical Queries
+anatomical_queries:
+  num_queries: 6
+  hidden_dim: 768
+  initialization: "xavier_uniform"
+  regions:
+    - "cardiac"
+    - "left_lung"
+    - "right_lung"
+    - "mediastinum"
+    - "diaphragm"
+    - "spine"
+
+# Cross-Attention Module
+cross_attention:
+  num_layers: 2
+  num_heads: 8
+  hidden_dim: 768
+  ffn_dim: 3072
+  dropout: 0.1
+  activation: "gelu"
+
+# Gated Fusion Module
+gated_fusion:
+  hidden_dim: 768
+  gate_hidden_dim: 512
+  num_pool_queries: 10
+  pool_num_heads: 8
+  dropout: 0.1
+
+# Text Decoder (Flan-T5)
+text_decoder:
+  model_name: "google/flan-t5-base"
+  hidden_dim: 768
+  max_length: 512
+  lora:
+    enabled: true
+    rank: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: ["q", "k", "v", "o"]
+
+# Auxiliary Classification Head
+auxiliary_head:
+  num_classes: 14
+  hidden_dim: 768
+  dropout: 0.2
+
+# Total Visual Tokens to Decoder
+num_visual_tokens: 11  # 1 CLS + 10 pooled

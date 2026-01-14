@@ -1,0 +1,72 @@
+# ============================================
+# CheXQuery-MedVLM Evaluation Configuration
+# ============================================
+
+# Generation settings
+generation:
+  max_length: 512
+  min_length: 20
+  num_beams: 4
+  length_penalty: 1.0
+  no_repeat_ngram_size: 3
+  early_stopping: true
+  do_sample: false
+  temperature: 1.0
+  top_p: 1.0
+  top_k: 50
+
+# Text normalization for metrics
+normalization:
+  lowercase: true
+  remove_prefixes: true  # Remove "Findings:", "Impression:"
+  normalize_whitespace: true
+  remove_punctuation: false
+
+# BLEU settings
+bleu:
+  smoothing_method: "method1"
+  weights:
+    bleu_1: [1.0, 0.0, 0.0, 0.0]
+    bleu_2: [0.5, 0.5, 0.0, 0.0]
+    bleu_3: [0.333, 0.333, 0.334, 0.0]
+    bleu_4: [0.25, 0.25, 0.25, 0.25]
+
+# ROUGE settings
+rouge:
+  types: ["rouge1", "rouge2", "rougeL"]
+  use_stemmer: true
+
+# BERTScore settings
+bertscore:
+  model_type: "microsoft/deberta-xlarge-mnli"
+  lang: "en"
+  batch_size: 32
+  rescale_with_baseline: false
+
+# METEOR settings
+meteor:
+  alpha: 0.9
+  beta: 3.0
+  gamma: 0.5
+
+# CheXbert settings
+chexbert:
+  compute_all_14: true
+  compute_top_5: true  # Top 5 most common conditions
+
+# Target metrics (for validation)
+targets:
+  bleu_1: 0.45
+  bleu_4: 0.22
+  rouge_1: 0.50
+  rouge_l: 0.48
+  meteor: 0.40
+  bertscore_f1: 0.91
+  chexbert_f1: 0.52
+
+# Output settings
+output:
+  save_predictions: true
+  save_attention_maps: true
+  predictions_file: "predictions.csv"
+  metrics_file: "metrics.json"

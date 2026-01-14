@@ -1,304 +1,226 @@
+"""
+PyTorch Dataset for Chest X-ray Report Generation.
+"""
+import json
+import logging
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 import pandas as pd
 import torch
-from torch.utils.data import Dataset
 from PIL import Image
-from pathlib import Path
-from typing import Optional, List, Tuple
+from torch.utils.data import Dataset
 from torchvision import transforms
 
-from utils.config import (
-    IMAGES_DIR, REPORTS_CSV, PROJECTIONS_CSV,
-    IMAGE_SIZE, IMAGE_MEAN, IMAGE_STD
-)
-from utils.tokenizer_utils import clean_medical_text, extract_impression_only, preprocess_findings_and_impression
-from utils.logger import setup_logger
+from data.preprocessing import TextPreprocessor
+from data.augmentations import get_train_transforms, get_val_transforms
 
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
-class IUXrayDataset(Dataset):
+class ChestXrayDataset(Dataset):
     """
-    IU-Xray Dataset for image-text pairs.
+    Dataset for chest X-ray report generation.
+    
+    Loads image-report pairs and provides CheXbert labels for auxiliary training.
     
     Args:
-        uids: List of patient uids to include
-        transform: Optional image transformations
-        use_findings: Whether to include findings in text (default: False, impression only)
-        projection_type: Filter by projection type ('Frontal', 'Lateral', or None for all)
+        data_root: Root directory containing images and CSVs
+        uids: List of patient UIDs to include
+        split: Dataset split ('train', 'val', 'test')
+        image_size: Target image size
+        transform: Optional custom transform
+        projection_type: Filter by projection type ('Frontal', 'Lateral', or None)
+        chexbert_labels: Optional pre-computed CheXbert labels dict
     """
     
     def __init__(
         self,
+        data_root: str,
         uids: List[int],
+        split: str = "train",
+        image_size: int = 384,
         transform: Optional[transforms.Compose] = None,
-        use_findings: bool = True,
-        projection_type: Optional[str] = None
+        projection_type: Optional[str] = "Frontal",
+        chexbert_labels: Optional[Dict[str, List[int]]] = None,
+        text_output_template: Optional[str] = None,
+        text_max_length: int = 512,
+        image_mean: Optional[List[float]] = None,
+        image_std: Optional[List[float]] = None,
+        augmentation_config: Optional[Dict[str, float]] = None,
     ):
+        self.data_root = Path(data_root)
         self.uids = set(uids)
-        self.transform = transform or self._get_default_transform()
-        self.use_findings = use_findings
+        self.split = split
+        self.image_size = image_size
         self.projection_type = projection_type
+        self.chexbert_labels = chexbert_labels or {}
         
-        self._load_data()
-    
-    def _get_default_transform(self):
-        """Get default image transforms for SigLIP."""
-        return transforms.Compose([
-            transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=IMAGE_MEAN, std=IMAGE_STD)
-        ])
-    
-    def _load_data(self):
-        """Load and merge reports and projections data."""
-        logger.info("Loading dataset...")
-        
-        reports_df = pd.read_csv(REPORTS_CSV)
-        projections_df = pd.read_csv(PROJECTIONS_CSV)
-        
-        reports_df = reports_df[reports_df['uid'].isin(self.uids)]
-        
-        merged_df = projections_df.merge(reports_df, on='uid', how='inner')
-        
-        if self.projection_type:
-            merged_df = merged_df[merged_df['projection'] == self.projection_type]
-        
-        # Validate and filter images
-        logger.info("Validating image files...")
-        valid_indices = []
-        image_filtered = 0
-        
-        for idx in range(len(merged_df)):
-            row = merged_df.iloc[idx]
-            image_path = IMAGES_DIR / row['filename']
-            
-            if not image_path.exists():
-                logger.warning(f"Missing image: {row['filename']} (UID: {row['uid']})")
-                image_filtered += 1
-                continue
-            
-            try:
-                img = Image.open(image_path).convert('RGB')
-                img.close()
-                valid_indices.append(idx)
-            except Exception as e:
-                logger.warning(f"Corrupted image: {row['filename']} (UID: {row['uid']}): {e}")
-                image_filtered += 1
-        
-        merged_df = merged_df.iloc[valid_indices].reset_index(drop=True)
-        logger.info(f"Filtered {image_filtered} invalid images")
-        
-        # Drop NaN impressions
-        merged_df = merged_df.dropna(subset=['impression'])
-        
-        # Filter out empty/whitespace-only impressions (safe type conversion)
-        merged_df = merged_df[merged_df['impression'].astype(str).str.strip().str.len() > 0]
-        
-        # Ensure at least findings OR impression has meaningful content
-        def has_valid_text(row):
-            findings = row.get('findings', '')
-            impression = row.get('impression', '')
-            
-            # Check if findings has content (not NaN, not empty, not whitespace)
-            has_findings = pd.notna(findings) and str(findings).strip() != ''
-            
-            # Check if impression has content (already filtered above, but double-check)
-            has_impression = pd.notna(impression) and str(impression).strip() != ''
-            
-            # At least one must have real content
-            return has_findings or has_impression
-        
-        merged_df = merged_df[merged_df.apply(has_valid_text, axis=1)]
-        
-        # Safety check: ensure dataset is not empty after filtering
-        if len(merged_df) == 0:
-            logger.error("No valid samples remaining after image and text validation!")
-            raise ValueError(f"Dataset empty after filtering. Check data quality.")
-        
-        logger.info(f"After text validation: {len(merged_df)} samples with valid medical text")
-        
-        self.data = merged_df.reset_index(drop=True)
-        
-        logger.info(f"Loaded {len(self.data)} image-text pairs")
-    
-    def __len__(self) -> int:
-        return len(self.data)
-    
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, str, dict]:
-        """
-        Get an item from the dataset.
-        
-        Returns:
-            image: Preprocessed image tensor
-            text: Medical report text
-            metadata: Dictionary with uid, filename, projection
-        """
-        row = self.data.iloc[idx]
-        
-        image_path = IMAGES_DIR / row['filename']
-        try:
-            image = Image.open(image_path).convert('RGB')
-        except Exception as e:
-            logger.error(f"Error loading image {image_path}: {e}")
-            image = Image.new('RGB', (IMAGE_SIZE, IMAGE_SIZE), color='black')
-        
-        if self.transform:
-            image = self.transform(image)
-        
-        # Convert NaN to empty string to avoid "nan" strings
-        findings = '' if pd.isna(row.get('findings')) else str(row['findings'])
-        impression = '' if pd.isna(row.get('impression')) else str(row['impression'])
-        
-        # Use utility function with smart fallback
-        text = preprocess_findings_and_impression(findings, impression)
-        
-        metadata = {
-            'uid': row['uid'],
-            'filename': row['filename'],
-            'projection': row['projection']
-        }
-        
-        return image, text, metadata
-
-
-class IUXrayContrastiveDataset(Dataset):
-    """
-    Dataset for contrastive learning (image-text pairs).
-    Returns images and text separately for contrastive loss.
-    """
-    
-    def __init__(
-        self,
-        uids: List[int],
-        tokenizer,
-        max_length: int = 256,
-        transform: Optional[transforms.Compose] = None,
-        projection_type: Optional[str] = None,
-        use_findings: bool = True
-    ):
-        self.uids = set(uids)
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        self.transform = transform or self._get_default_transform()
-        self.projection_type = projection_type
-        self.use_findings = use_findings
-        
-        self._load_data()
-    
-    def _get_default_transform(self):
-        """Get default image transforms."""
-        return transforms.Compose([
-            transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=IMAGE_MEAN, std=IMAGE_STD)
-        ])
-    
-    def _load_data(self):
-        """Load and process data."""
-        reports_df = pd.read_csv(REPORTS_CSV)
-        projections_df = pd.read_csv(PROJECTIONS_CSV)
-        
-        reports_df = reports_df[reports_df['uid'].isin(self.uids)]
-        merged_df = projections_df.merge(reports_df, on='uid', how='inner')
-        
-        if self.projection_type:
-            merged_df = merged_df[merged_df['projection'] == self.projection_type]
-        
-        # Validate and filter images
-        logger.info("Validating image files...")
-        valid_indices = []
-        image_filtered = 0
-        
-        for idx in range(len(merged_df)):
-            row = merged_df.iloc[idx]
-            image_path = IMAGES_DIR / row['filename']
-            
-            if not image_path.exists():
-                logger.warning(f"Missing image: {row['filename']} (UID: {row['uid']})")
-                image_filtered += 1
-                continue
-            
-            try:
-                img = Image.open(image_path).convert('RGB')
-                img.close()
-                valid_indices.append(idx)
-            except Exception as e:
-                logger.warning(f"Corrupted image: {row['filename']} (UID: {row['uid']}): {e}")
-                image_filtered += 1
-        
-        merged_df = merged_df.iloc[valid_indices].reset_index(drop=True)
-        logger.info(f"Filtered {image_filtered} invalid images")
-        
-        # Drop NaN impressions
-        merged_df = merged_df.dropna(subset=['impression'])
-        
-        # Filter out empty/whitespace-only impressions (safe type conversion)
-        merged_df = merged_df[merged_df['impression'].astype(str).str.strip().str.len() > 0]
-        
-        # Ensure at least findings OR impression has meaningful content
-        def has_valid_text(row):
-            findings = row.get('findings', '')
-            impression = row.get('impression', '')
-            has_findings = pd.notna(findings) and str(findings).strip() != ''
-            has_impression = pd.notna(impression) and str(impression).strip() != ''
-            return has_findings or has_impression
-        
-        merged_df = merged_df[merged_df.apply(has_valid_text, axis=1)]
-        
-        # Safety check: ensure dataset is not empty after filtering
-        if len(merged_df) == 0:
-            logger.error("No valid samples remaining after image and text validation!")
-            raise ValueError(f"Dataset empty after filtering. Check data quality.")
-        
-        logger.info(f"After text validation: {len(merged_df)} samples with valid medical text")
-        
-        self.data = merged_df.reset_index(drop=True)
-        logger.info(f"Loaded {len(self.data)} image-text pairs for contrastive learning")
-    
-    def __len__(self) -> int:
-        return len(self.data)
-    
-    def __getitem__(self, idx: int):
-        """Get image and tokenized text."""
-        row = self.data.iloc[idx]
-        
-        image_path = IMAGES_DIR / row['filename']
-        try:
-            image = Image.open(image_path).convert('RGB')
-        except Exception as e:
-            logger.error(f"Error loading image {image_path}: {e}")
-            image = Image.new('RGB', (IMAGE_SIZE, IMAGE_SIZE), color='black')
-        
-        if self.transform:
-            image = self.transform(image)
-        
-        if self.use_findings:
-            # Convert NaN to empty string
-            findings = '' if pd.isna(row.get('findings')) else str(row['findings'])
-            impression = '' if pd.isna(row.get('impression')) else str(row['impression'])
-            text = preprocess_findings_and_impression(findings, impression)
-        else:
-            text = extract_impression_only(str(row['impression']))
-        
-        text_encoded = self.tokenizer(
-            text,
-            max_length=self.max_length,
-            padding='max_length',
-            truncation=True,
-            return_tensors='pt'
+        # Text preprocessor
+        self.text_preprocessor = TextPreprocessor(
+            output_template=text_output_template or "Findings: {findings} | Impression: {impression}",
+            max_length=text_max_length,
         )
         
-        if 'attention_mask' not in text_encoded:
-            # Create attention mask manually: 1 for non-pad, 0 for pad
-            pad_token_id = self.tokenizer.pad_token_id
-            input_ids = text_encoded['input_ids']
-            attention_mask = (input_ids != pad_token_id).long()
-            text_encoded['attention_mask'] = attention_mask
-
+        # Set up transforms
+        if transform is not None:
+            self.transform = transform
+        elif split == "train":
+            aug = augmentation_config or {}
+            self.transform = get_train_transforms(
+                image_size=image_size,
+                mean=image_mean or [0.5, 0.5, 0.5],
+                std=image_std or [0.5, 0.5, 0.5],
+                rotation_degrees=aug.get("rotation_degrees", 5.0),
+                translate_percent=aug.get("translate_percent", 0.03),
+                scale_range=tuple(aug.get("scale_range", [0.97, 1.03])),
+                brightness_jitter=aug.get("brightness_jitter", 0.05),
+                contrast_jitter=aug.get("contrast_jitter", 0.05),
+            )
+        else:
+            self.transform = get_val_transforms(
+                image_size=image_size,
+                mean=image_mean or [0.5, 0.5, 0.5],
+                std=image_std or [0.5, 0.5, 0.5],
+            )
+        
+        # Load data
+        self._load_data()
+    
+    def _load_data(self):
+        """Load and merge reports with projections data."""
+        logger.info(f"Loading {self.split} dataset...")
+        
+        # Load CSVs
+        reports_path = self.data_root / "indiana_reports.csv"
+        projections_path = self.data_root / "indiana_projections.csv"
+        
+        reports_df = pd.read_csv(reports_path)
+        projections_df = pd.read_csv(projections_path)
+        
+        # Filter by UIDs
+        reports_df = reports_df[reports_df['uid'].isin(self.uids)]
+        
+        # Merge
+        merged_df = projections_df.merge(reports_df, on='uid', how='inner')
+        
+        # Filter by projection type
+        if self.projection_type:
+            merged_df = merged_df[merged_df['projection'] == self.projection_type]
+        
+        # Validate images and filter
+        valid_samples = []
+        images_dir = self.data_root / "images" / "images_normalized"
+        
+        for idx, row in merged_df.iterrows():
+            image_path = images_dir / row['filename']
+            
+            # Check image exists
+            if not image_path.exists():
+                continue
+            
+            # Check image is valid
+            try:
+                img = Image.open(image_path)
+                img.verify()
+            except Exception:
+                continue
+            
+            # Check report has content
+            findings = row.get('findings', '')
+            impression = row.get('impression', '')
+            
+            if pd.isna(impression) or str(impression).strip() == '':
+                continue
+            
+            valid_samples.append({
+                'uid': row['uid'],
+                'filename': row['filename'],
+                'image_path': str(image_path),
+                'projection': row['projection'],
+                'findings': str(findings) if pd.notna(findings) else '',
+                'impression': str(impression),
+            })
+        
+        self.samples = valid_samples
+        logger.info(f"Loaded {len(self.samples)} {self.split} samples")
+    
+    def __len__(self) -> int:
+        return len(self.samples)
+    
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        """
+        Get a sample.
+        
+        Returns:
+            Dictionary containing:
+                - image: Tensor [3, H, W]
+                - text: Structured report string
+                - chexbert_labels: Tensor [14] binary labels
+                - metadata: Dict with uid, filename, etc.
+        """
+        sample = self.samples[idx]
+        
+        # Load image
+        image = Image.open(sample['image_path']).convert('RGB')
+        if self.transform:
+            image = self.transform(image)
+        
+        # Format text
+        text = self.text_preprocessor.format_structured_output(
+            findings=sample['findings'],
+            impression=sample['impression'],
+        )
+        
+        # Get CheXbert labels
+        uid_key = str(sample['uid'])
+        if uid_key in self.chexbert_labels:
+            chexbert_labels = torch.tensor(
+                self.chexbert_labels[uid_key],
+                dtype=torch.float32
+            )
+            chexbert_mask = torch.tensor(1.0, dtype=torch.float32)
+        else:
+            # No labels available for this sample
+            chexbert_labels = torch.zeros(14, dtype=torch.float32)
+            chexbert_mask = torch.tensor(0.0, dtype=torch.float32)
+        
+        # Metadata
+        metadata = {
+            'uid': sample['uid'],
+            'filename': sample['filename'],
+            'projection': sample['projection'],
+        }
+        
         return {
             'image': image,
-            'input_ids': text_encoded['input_ids'].squeeze(0),
-            'attention_mask': text_encoded['attention_mask'].squeeze(0),
-            'uid': row['uid']
+            'text': text,
+            'chexbert_labels': chexbert_labels,
+            'chexbert_mask': chexbert_mask,
+            'metadata': metadata,
         }
 
+
+def collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
+    """
+    Custom collate function for DataLoader.
+    
+    Args:
+        batch: List of sample dictionaries
+        
+    Returns:
+        Batched dictionary
+    """
+    images = torch.stack([item['image'] for item in batch])
+    texts = [item['text'] for item in batch]
+    chexbert_labels = torch.stack([item['chexbert_labels'] for item in batch])
+    chexbert_mask = torch.stack([item['chexbert_mask'] for item in batch])
+    metadata = [item['metadata'] for item in batch]
+    
+    return {
+        'images': images,
+        'texts': texts,
+        'chexbert_labels': chexbert_labels,
+        'chexbert_mask': chexbert_mask,
+        'metadata': metadata,
+    }

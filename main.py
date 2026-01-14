@@ -1,186 +1,465 @@
 """
-Main CLI for running different stages of the Medical-SigLIP pipeline.
-Built with PyTorch Lightning.
+CheXQuery-MedVLM: Main Entry Point
+
+A novel vision-language model for chest X-ray report generation
+featuring CheXbert-initialized condition queries and anatomical region queries.
 """
 import argparse
+import logging
 import sys
 from pathlib import Path
 
-from data.split import create_data_splits
-from utils.logger import setup_logger
+import yaml
+import torch
 
-logger = setup_logger(__name__)
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger(__name__)
+
+
+def load_config(config_path: str) -> dict:
+    """Load YAML configuration file."""
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
 
 def prepare_data(args):
-    """Prepare and split the data."""
-    logger.info("Preparing data splits...")
-    splits = create_data_splits()
-    logger.info(f"Data preparation completed:")
-    logger.info(f"  Train: {len(splits['train'])} patients")
-    logger.info(f"  Val: {len(splits['val'])} patients")
-    logger.info(f"  Test: {len(splits['test'])} patients")
+    """Prepare data splits and download dataset."""
+    logger.info("Preparing data...")
+    
+    from data.datamodule import ChestXrayDataModule
+    data_config = load_config(args.data_config)
+    
+    datamodule = ChestXrayDataModule(
+        batch_size=args.batch_size,
+        splits_file=args.splits_file,
+        text_output_template=data_config.get("text", {}).get("output_template"),
+        text_max_length=data_config.get("text", {}).get("max_length", 512),
+        image_mean=data_config.get("image", {}).get("mean"),
+        image_std=data_config.get("image", {}).get("std"),
+        augmentation_config=data_config.get("augmentation", {}),
+        use_siglip_processor=data_config.get("image", {}).get("use_siglip_processor", False),
+        processor_model=data_config.get("image", {}).get("processor_model"),
+    )
+    
+    # This will download data and create splits
+    datamodule.prepare_data()
+    datamodule.setup()
+    
+    logger.info(f"Train samples: {len(datamodule.train_dataset)}")
+    logger.info(f"Val samples: {len(datamodule.val_dataset)}")
+    logger.info(f"Test samples: {len(datamodule.test_dataset)}")
+    logger.info("Data preparation complete!")
 
 
-def train_siglip(args):
-    """Train SigLIP with LoRA or QLoRA using Lightning."""
-    from train.train_siglip_lightning import train_siglip as train_fn
+def train(args):
+    """Train the model."""
+    logger.info("Starting training...")
     
-    logger.info(f"Training SigLIP with {args.peft_method} using PyTorch Lightning...")
+    from training.trainer import train_model, train_all_phases
     
-    class TrainArgs:
-        def __init__(self):
-            self.config = args.config
-            self.peft_method = args.peft_method
-            self.batch_size = args.batch_size
-            self.num_epochs = args.num_epochs
-    
-    train_args = TrainArgs()
-    train_fn(train_args)
-
-
-def train_full(args):
-    """Train full pipeline: SigLIP + projection + BioGPT using Lightning."""
-    from train.train_full_lightning import train_full_pipeline
-    
-    logger.info("Training full pipeline with PyTorch Lightning...")
-    
-    class TrainArgs:
-        def __init__(self):
-            self.config = args.config
-            self.siglip_checkpoint = args.siglip_checkpoint
-            self.freeze_siglip = args.freeze_siglip
-            self.num_epochs = args.num_epochs
-    
-    train_args = TrainArgs()
-    train_full_pipeline(train_args)
+    if args.all_phases:
+        train_all_phases(
+            model_config_path=args.model_config,
+            train_config_path=args.train_config,
+            data_config_path=args.data_config,
+        )
+    else:
+        train_model(
+            model_config_path=args.model_config,
+            train_config_path=args.train_config,
+            data_config_path=args.data_config,
+            phase=args.phase,
+            checkpoint_path=args.checkpoint_dir,
+            resume_from=args.resume,
+        )
 
 
 def evaluate(args):
-    """Evaluate a trained model."""
-    from eval.evaluate_lightning import evaluate_model
+    """Evaluate the model."""
+    logger.info("Starting evaluation...")
     
-    logger.info(f"Evaluating model from {args.checkpoint}...")
+    from evaluation.evaluate import evaluate_from_configs
     
-    evaluate_model(
+    metrics = evaluate_from_configs(
         checkpoint_path=args.checkpoint,
+        model_config_path=args.model_config,
+        train_config_path=args.train_config,
+        data_config_path=args.data_config,
+        eval_config_path=args.eval_config,
+        output_dir=args.output_dir,
+        batch_size=args.batch_size,
+        max_length=args.max_length,
+        num_beams=args.num_beams,
         split=args.split,
-        output_dir=Path(args.output_dir) if args.output_dir else None,
-        limit_batches=args.limit_batches
     )
+    
+    logger.info("Evaluation complete!")
+    return metrics
 
 
-def qualitative(args):
-    """Run qualitative analysis."""
-    from eval.qualitative_analysis_lightning import visualize_samples
+def generate(args):
+    """Generate reports for images."""
+    logger.info("Generating reports...")
     
-    logger.info("Running qualitative analysis with PyTorch Lightning...")
+    from PIL import Image
     
-    visualize_samples(
-        checkpoint_path=args.checkpoint,
-        num_samples=args.num_samples
+    from data.augmentations import get_inference_transforms
+    from training.lightning_module import CheXQueryLightningModule
+    
+    # Load configs
+    model_config = load_config(args.model_config)
+    train_config = load_config(args.train_config)
+    data_config = load_config(args.data_config)
+    eval_config = load_config(args.eval_config)
+    generation_config = eval_config.get("generation", {})
+    
+    # Load model
+    logger.info(f"Loading model from {args.checkpoint}")
+    model = CheXQueryLightningModule.load_from_checkpoint(
+        args.checkpoint,
+        model_config=model_config,
+        training_config=train_config,
+        phase=2,
+        prompt_template=data_config.get("text", {}).get("prompt_template"),
     )
+    model.eval()
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    
+    # Image transform
+    transform = get_inference_transforms(
+        image_size=data_config.get("image", {}).get("size", 384),
+        mean=data_config.get("image", {}).get("mean", [0.5, 0.5, 0.5]),
+        std=data_config.get("image", {}).get("std", [0.5, 0.5, 0.5]),
+    )
+    
+    # Generate for each image
+    image_paths = args.images
+    if len(image_paths) == 1 and Path(image_paths[0]).is_dir():
+        # Directory provided
+        image_dir = Path(image_paths[0])
+        image_paths = list(image_dir.glob("*.png")) + list(image_dir.glob("*.jpg"))
+    
+    for image_path in image_paths:
+        logger.info(f"Processing: {image_path}")
+        
+        # Load and transform image
+        image = Image.open(image_path).convert("RGB")
+        image_tensor = transform(image).unsqueeze(0).to(device)
+        
+        # Generate
+        with torch.no_grad():
+            report = model.generate(
+                images=image_tensor,
+                max_length=generation_config.get("max_length", args.max_length),
+                min_length=generation_config.get("min_length", 20),
+                num_beams=generation_config.get("num_beams", args.num_beams),
+                length_penalty=generation_config.get("length_penalty", 1.0),
+                no_repeat_ngram_size=generation_config.get("no_repeat_ngram_size", 3),
+                early_stopping=generation_config.get("early_stopping", True),
+                do_sample=generation_config.get("do_sample", False),
+                temperature=generation_config.get("temperature", 1.0),
+                top_p=generation_config.get("top_p", 1.0),
+                top_k=generation_config.get("top_k", 50),
+            )[0]
+        
+        print(f"\n{'='*60}")
+        print(f"Image: {image_path}")
+        print(f"{'='*60}")
+        print(f"Report: {report}")
+        print(f"{'='*60}\n")
 
 
-def compare(args):
-    """Compare LoRA vs QLoRA."""
-    from experiments.compare_lora_qlora_lightning import compare_methods
+def visualize(args):
+    """Generate attention visualizations."""
+    logger.info("Generating visualizations...")
     
-    logger.info("Comparing LoRA vs QLoRA with PyTorch Lightning...")
+    from PIL import Image
     
-    compare_methods(config_path=args.config)
+    from data.augmentations import get_inference_transforms
+    from training.lightning_module import CheXQueryLightningModule
+    from visualization.attention_viz import save_all_visualizations
+    
+    # Load configs
+    model_config = load_config(args.model_config)
+    train_config = load_config(args.train_config)
+    data_config = load_config(args.data_config)
+    eval_config = load_config(args.eval_config)
+    generation_config = eval_config.get("generation", {})
+    
+    # Load model
+    model = CheXQueryLightningModule.load_from_checkpoint(
+        args.checkpoint,
+        model_config=model_config,
+        training_config=train_config,
+        phase=2,
+        prompt_template=data_config.get("text", {}).get("prompt_template"),
+    )
+    model.eval()
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    
+    # Image transform
+    transform = get_inference_transforms(
+        image_size=data_config.get("image", {}).get("size", 384),
+        mean=data_config.get("image", {}).get("mean", [0.5, 0.5, 0.5]),
+        std=data_config.get("image", {}).get("std", [0.5, 0.5, 0.5]),
+    )
+    
+    # Process images
+    for image_path in args.images:
+        logger.info(f"Processing: {image_path}")
+        
+        # Load image
+        image = Image.open(image_path).convert("RGB")
+        image_tensor = transform(image).unsqueeze(0).to(device)
+        
+        # Generate with attention
+        with torch.no_grad():
+            generated, attn_weights, gate_values = model.model.generate_with_attention(
+                pixel_values=image_tensor,
+                max_length=generation_config.get("max_length", args.max_length),
+                num_beams=generation_config.get("num_beams", args.num_beams),
+            )
+        
+        # Get query names
+        condition_names = model.model.get_condition_names()
+        region_names = model.model.get_region_names()
+        
+        # Split attention weights
+        num_condition = len(condition_names)
+        condition_attn = attn_weights[0, :num_condition, :]
+        anatomical_attn = attn_weights[0, num_condition:, :]
+        
+        # Save visualizations
+        sample_id = Path(image_path).stem
+        save_all_visualizations(
+            image=image_tensor[0],
+            condition_attention=condition_attn,
+            anatomical_attention=anatomical_attn,
+            condition_names=condition_names,
+            region_names=region_names,
+            output_dir=args.output_dir,
+            sample_id=sample_id,
+        )
+        
+        logger.info(f"Generated report: {generated[0]}")
 
 
 def main():
-    """Main CLI entry point."""
+    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Medical-SigLIP: Fine-tuning with PEFT using PyTorch Lightning",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Prepare data
-  python main.py prepare_data
-  
-  # Train SigLIP with LoRA
-  python main.py train_siglip --peft_method lora
-  
-  # Train SigLIP with QLoRA
-  python main.py train_siglip --peft_method qlora --num_epochs 10
-  
-  # Train full pipeline
-  python main.py train_full --siglip_checkpoint checkpoints/siglip_lora/last.ckpt
-  
-  # Evaluate model
-  python main.py evaluate --checkpoint checkpoints/full_pipeline/last.ckpt
-  
-  # Qualitative analysis
-  python main.py qualitative --checkpoint checkpoints/full_pipeline/last.ckpt --num_samples 10
-  
-  # Compare LoRA vs QLoRA
-  python main.py compare
-  
-Note: All training uses PyTorch Lightning Trainer
-        """
+        description="CheXQuery-MedVLM: Chest X-ray Report Generation"
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    
+    # Common arguments
+    common_parser = argparse.ArgumentParser(add_help=False)
+    common_parser.add_argument(
+        "--model-config",
+        default="configs/model_config.yaml",
+        help="Path to model config"
+    )
+    common_parser.add_argument(
+        "--train-config",
+        default="configs/train_config.yaml",
+        help="Path to training config"
+    )
+    common_parser.add_argument(
+        "--data-config",
+        default="configs/data_config.yaml",
+        help="Path to data config"
+    )
+    common_parser.add_argument(
+        "--eval-config",
+        default="configs/eval_config.yaml",
+        help="Path to eval config"
     )
     
-    subparsers = parser.add_subparsers(dest='command', help='Command to run')
+    # Prepare data
+    prepare_parser = subparsers.add_parser(
+        "prepare",
+        parents=[common_parser],
+        help="Prepare data splits"
+    )
+    prepare_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help="Batch size"
+    )
+    prepare_parser.add_argument(
+        "--splits-file",
+        default="outputs/splits/data_splits.json",
+        help="Path to save splits"
+    )
     
-    prepare_parser = subparsers.add_parser('prepare_data', help='Prepare and split the dataset')
+    # Train
+    train_parser = subparsers.add_parser(
+        "train",
+        parents=[common_parser],
+        help="Train the model"
+    )
+    train_parser.add_argument(
+        "--phase",
+        type=int,
+        default=1,
+        choices=[1, 2, 3],
+        help="Training phase"
+    )
+    train_parser.add_argument(
+        "--all-phases",
+        action="store_true",
+        help="Run all training phases"
+    )
+    train_parser.add_argument(
+        "--checkpoint-dir",
+        default="outputs/checkpoints",
+        help="Checkpoint directory"
+    )
+    train_parser.add_argument(
+        "--resume",
+        default=None,
+        help="Path to checkpoint to resume from"
+    )
     
-    train_siglip_parser = subparsers.add_parser('train_siglip', help='Train SigLIP encoder with Lightning')
-    train_siglip_parser.add_argument('--peft_method', type=str, default='lora', choices=['lora', 'qlora'], help='PEFT method to use')
-    train_siglip_parser.add_argument('--config', type=str, help='Path to config file')
-    train_siglip_parser.add_argument('--batch_size', type=int, help='Batch size')
-    train_siglip_parser.add_argument('--num_epochs', type=int, help='Number of epochs')
+    # Evaluate
+    eval_parser = subparsers.add_parser(
+        "evaluate",
+        parents=[common_parser],
+        help="Evaluate the model"
+    )
+    eval_parser.add_argument(
+        "--checkpoint",
+        required=True,
+        help="Path to model checkpoint"
+    )
+    eval_parser.add_argument(
+        "--output-dir",
+        default="outputs/evaluation",
+        help="Output directory"
+    )
+    eval_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help="Batch size"
+    )
+    eval_parser.add_argument(
+        "--max-length",
+        type=int,
+        default=512,
+        help="Max generation length"
+    )
+    eval_parser.add_argument(
+        "--num-beams",
+        type=int,
+        default=4,
+        help="Number of beams"
+    )
+    eval_parser.add_argument(
+        "--split",
+        default="test",
+        choices=["train", "val", "test"],
+        help="Dataset split"
+    )
     
-    train_full_parser = subparsers.add_parser('train_full', help='Train full pipeline with Lightning')
-    train_full_parser.add_argument('--siglip_checkpoint', type=str, help='Path to pretrained SigLIP checkpoint')
-    train_full_parser.add_argument('--config', type=str, help='Path to config file')
-    train_full_parser.add_argument('--freeze_siglip', action='store_true', default=True, help='Freeze SigLIP encoder')
-    train_full_parser.add_argument('--num_epochs', type=int, help='Number of epochs')
+    # Generate
+    gen_parser = subparsers.add_parser(
+        "generate",
+        parents=[common_parser],
+        help="Generate reports"
+    )
+    gen_parser.add_argument(
+        "--checkpoint",
+        required=True,
+        help="Path to model checkpoint"
+    )
+    gen_parser.add_argument(
+        "--images",
+        nargs="+",
+        required=True,
+        help="Image paths or directory"
+    )
+    gen_parser.add_argument(
+        "--max-length",
+        type=int,
+        default=512,
+        help="Max generation length"
+    )
+    gen_parser.add_argument(
+        "--num-beams",
+        type=int,
+        default=4,
+        help="Number of beams"
+    )
     
-    eval_parser = subparsers.add_parser('evaluate', help='Evaluate a trained model')
-    eval_parser.add_argument('--checkpoint', type=str, required=True, help='Path to model checkpoint')
-    eval_parser.add_argument('--split', type=str, default='test', choices=['val', 'test'], help='Data split to evaluate')
-    eval_parser.add_argument('--output_dir', type=str, help='Output directory for results')
-    eval_parser.add_argument('--limit_batches', type=int, help='Limit number of batches for testing')
+    # Visualize
+    viz_parser = subparsers.add_parser(
+        "visualize",
+        parents=[common_parser],
+        help="Generate attention visualizations"
+    )
+    viz_parser.add_argument(
+        "--checkpoint",
+        required=True,
+        help="Path to model checkpoint"
+    )
+    viz_parser.add_argument(
+        "--images",
+        nargs="+",
+        required=True,
+        help="Image paths"
+    )
+    viz_parser.add_argument(
+        "--output-dir",
+        default="outputs/visualizations",
+        help="Output directory"
+    )
+    viz_parser.add_argument(
+        "--max-length",
+        type=int,
+        default=512,
+        help="Max generation length"
+    )
+    viz_parser.add_argument(
+        "--num-beams",
+        type=int,
+        default=4,
+        help="Number of beams"
+    )
     
-    qual_parser = subparsers.add_parser('qualitative', help='Run qualitative analysis')
-    qual_parser.add_argument('--checkpoint', type=str, required=True, help='Path to model checkpoint')
-    qual_parser.add_argument('--num_samples', type=int, default=5, help='Number of samples to visualize')
-    
-    compare_parser = subparsers.add_parser('compare', help='Compare LoRA vs QLoRA')
-    compare_parser.add_argument('--config', type=str, help='Path to config file')
-    
+    # Parse arguments
     args = parser.parse_args()
     
-    if not args.command:
+    if args.command is None:
         parser.print_help()
-        sys.exit(1)
+        return
     
-    logger.info("="*60)
-    logger.info(f"Medical-SigLIP Pipeline (PyTorch Lightning) - Command: {args.command}")
-    logger.info("="*60)
+    # Execute command
+    logger.info("=" * 60)
+    logger.info("CheXQuery-MedVLM")
+    logger.info("=" * 60)
     
-    if args.command == 'prepare_data':
+    if args.command == "prepare":
         prepare_data(args)
-    elif args.command == 'train_siglip':
-        train_siglip(args)
-    elif args.command == 'train_full':
-        train_full(args)
-    elif args.command == 'evaluate':
+    elif args.command == "train":
+        train(args)
+    elif args.command == "evaluate":
         evaluate(args)
-    elif args.command == 'qualitative':
-        qualitative(args)
-    elif args.command == 'compare':
-        compare(args)
+    elif args.command == "generate":
+        generate(args)
+    elif args.command == "visualize":
+        visualize(args)
     else:
-        logger.error(f"Unknown command: {args.command}")
-        sys.exit(1)
-    
-    logger.info("="*60)
-    logger.info("Completed successfully!")
-    logger.info("="*60)
+        parser.print_help()
 
 
 if __name__ == "__main__":

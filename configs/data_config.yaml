@@ -1,0 +1,83 @@
+# ============================================
+# CheXQuery-MedVLM Data Configuration
+# ============================================
+
+# Dataset
+dataset:
+  name: "iu_xray"
+  # Data will be downloaded via kagglehub
+  kaggle_dataset: "raddar/chest-xrays-indiana-university"
+  
+  # Data paths (relative to downloaded dataset root)
+  images_dir: "images/images_normalized"
+  reports_csv: "indiana_reports.csv"
+  projections_csv: "indiana_projections.csv"
+
+# Data splits
+splits:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  split_by: "patient"  # Split by patient to avoid data leakage
+  split_file: "outputs/splits/data_splits.json"
+
+# Image preprocessing
+image:
+  size: 384
+  channels: 3  # Original X-rays are grayscale, converted to RGB for SigLIP
+  mean: [0.5, 0.5, 0.5]
+  std: [0.5, 0.5, 0.5]
+  use_siglip_processor: true
+  processor_model: "google/siglip-base-patch16-384"
+
+# Data augmentation (medically-valid for chest X-rays)
+# IMPORTANT: Augmentations are conservative to preserve diagnostic validity
+augmentation:
+  # NOT USED - would corrupt anatomy:
+  #   - horizontal_flip: Heart is on LEFT side, flipping is invalid
+  #   - vertical_flip: Would invert patient orientation
+  #   - large rotations: Patients are positioned consistently
+  # 
+  # USED (conservative):
+  rotation_degrees: 5        # Small rotation for positioning variance
+  translate_percent: 0.03    # Small translation for centering variance  
+  scale_range: [0.97, 1.03]  # Minimal scaling for distance variance
+  brightness_jitter: 0.05    # Conservative intensity change
+  contrast_jitter: 0.05      # Conservative contrast change
+
+# Text preprocessing
+text:
+  max_length: 512
+  structured_format: true
+  output_template: "Findings: {findings} | Impression: {impression}"
+  
+  # Prompt template for generation
+  prompt_template: |
+    Generate a structured radiology report for this chest X-ray image.
+    Format: Findings: [detailed observations] | Impression: [clinical conclusion]
+    Report:
+
+# CheXbert labels
+chexbert:
+  num_labels: 14
+  labels:
+    - "No Finding"
+    - "Enlarged Cardiomediastinum"
+    - "Cardiomegaly"
+    - "Lung Opacity"
+    - "Lung Lesion"
+    - "Edema"
+    - "Consolidation"
+    - "Pneumonia"
+    - "Atelectasis"
+    - "Pneumothorax"
+    - "Pleural Effusion"
+    - "Pleural Other"
+    - "Fracture"
+    - "Support Devices"
+
+# Filtering
+filtering:
+  projection_type: "Frontal"  # "Frontal", "Lateral", or null for all
+  min_report_length: 10  # Minimum characters in report
+  require_impression: true  # Require non-empty impression

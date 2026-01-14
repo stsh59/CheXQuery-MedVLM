@@ -1,6 +1,8 @@
-# ==========================
+# ============================================
+# CheXQuery-MedVLM .gitignore
+# ============================================
+
 # Python
-# ==========================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -22,117 +24,66 @@ wheels/
 .installed.cfg
 *.egg
 
-# ==========================
-# Virtual Environments
-# ==========================
-venv/
+# Virtual environments
+.env
 .venv/
-env/
-.env/
+venv/
 ENV/
-.conda/
-conda-env/
+env/
 
-# ==========================
-# IDE / Editors
-# ==========================
+# IDEs
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.project
-.pydevproject
-.settings/
-*.sublime-project
-*.sublime-workspace
 
-# ==========================
-# Jupyter Notebooks
-# ==========================
+# Jupyter Notebook
 .ipynb_checkpoints/
-*.ipynb_checkpoints/
 
-# ==========================
-# Model Checkpoints & Weights
-# ==========================
-checkpoints/*
-!checkpoints/.gitkeep
+# Model Checkpoints (large files)
+outputs/checkpoints/
 *.ckpt
 *.pt
 *.pth
 *.bin
 *.safetensors
-*.h5
 
-# ==========================
-# Outputs & Logs
-# ==========================
-outputs/comparison/*
-outputs/evaluation/*
-outputs/logs/*
-outputs/qualitative/*
-!outputs/**/.gitkeep
+# Outputs
+outputs/logs/
+outputs/evaluation/
+outputs/qualitative/
+outputs/visualizations/
 !outputs/splits/
-!outputs/splits/data_splits.json
-*.log
-logs/
-lightning_logs/
+
+# Logging
 wandb/
-mlruns/
+lightning_logs/
 tensorboard_logs/
+*.log
 
-# ==========================
-# Data & Cache
-# ==========================
-*.csv
-!outputs/splits/*.json
+# Data and Cache
 .cache/
-*.cache
-huggingface/
-~/.cache/
+hf_cache/
+kaggle/
+kagglehub/
+*.csv
+!outputs/evaluation/*.csv
 
-# ==========================
-# Environment Variables
-# ==========================
-.env
-.env.local
-.env.*.local
-*.env
-
-# ==========================
-# OS Generated Files
-# ==========================
+# OS generated files
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
-desktop.ini
-
-# ==========================
-# Testing & Coverage
-# ==========================
-.coverage
-.tox/
-.nox/
-htmlcov/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# ==========================
-# SLURM Job Outputs (keep .slurm scripts)
-# ==========================
-slurm-*.out
-!*.slurm
-
-# ==========================
-# Temporary Files
-# ==========================
-*.tmp
-*.temp
 *.bak
-*.backup
+
+# SLURM output files
+slurm-*.out
+slurm-*.err
+
+# Keep SLURM scripts
+!scripts/*.slurm
+
+# Keep config files
+!configs/*.yaml
+
+# Keep split file
+!outputs/splits/data_splits.json

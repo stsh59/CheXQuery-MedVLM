@@ -1,0 +1,239 @@
+"""
+PyTorch Lightning Module for CheXQuery-MedVLM.
+"""
+import logging
+from typing import Any, Dict, List, Optional
+
+import torch
+import pytorch_lightning as pl
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from transformers import get_linear_schedule_with_warmup
+
+from models.chexquery_medvlm import CheXQueryMedVLM
+
+logger = logging.getLogger(__name__)
+
+
+class CheXQueryLightningModule(pl.LightningModule):
+    """
+    PyTorch Lightning Module for CheXQuery-MedVLM training.
+    
+    Handles:
+    - Three-phase training strategy
+    - Combined generation + auxiliary loss
+    - Freezing/unfreezing components per phase
+    
+    Args:
+        model_config: Model configuration dictionary
+        training_config: Training configuration dictionary
+        phase: Current training phase (1, 2, or 3)
+    """
+    
+    def __init__(
+        self,
+        model_config: Dict[str, Any],
+        training_config: Dict[str, Any],
+        phase: int = 1,
+        prompt_template: Optional[str] = None,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+        
+        self.model_config = model_config
+        self.training_config = training_config
+        self.current_phase = phase
+        self.prompt_template = prompt_template
+        
+        # Get phase-specific config
+        self.phase_config = training_config.get(f"phase{phase}", {})
+        
+        # Build model
+        self.model = CheXQueryMedVLM(
+            vision_model_name=model_config.get("vision_encoder", {}).get("model_name", "google/siglip-base-patch16-384"),
+            vision_hidden_dim=model_config.get("vision_encoder", {}).get("hidden_dim", 768),
+            vision_use_lora=model_config.get("vision_encoder", {}).get("lora", {}).get("enabled", True),
+            vision_lora_rank=model_config.get("vision_encoder", {}).get("lora", {}).get("rank", 8),
+            num_condition_queries=model_config.get("condition_queries", {}).get("num_queries", 14),
+            num_anatomical_queries=model_config.get("anatomical_queries", {}).get("num_queries", 6),
+            num_cross_attn_layers=model_config.get("cross_attention", {}).get("num_layers", 2),
+            num_attn_heads=model_config.get("cross_attention", {}).get("num_heads", 8),
+            ffn_dim=model_config.get("cross_attention", {}).get("ffn_dim", 3072),
+            num_pool_queries=model_config.get("gated_fusion", {}).get("num_pool_queries", 10),
+            decoder_model_name=model_config.get("text_decoder", {}).get("model_name", "google/flan-t5-base"),
+            decoder_use_lora=model_config.get("text_decoder", {}).get("lora", {}).get("enabled", True),
+            decoder_lora_rank=model_config.get("text_decoder", {}).get("lora", {}).get("rank", 16),
+            max_length=model_config.get("text_decoder", {}).get("max_length", 512),
+            prompt_template=prompt_template,
+            hidden_dim=model_config.get("vision_encoder", {}).get("hidden_dim", 768),
+            dropout=model_config.get("cross_attention", {}).get("dropout", 0.1),
+        )
+        
+        # Loss weights
+        loss_config = self.phase_config.get("loss", {})
+        self.generation_weight = loss_config.get("generation_weight", 1.0)
+        self.auxiliary_weight = loss_config.get("auxiliary_weight", 0.3)
+        self.label_smoothing = loss_config.get("label_smoothing", 0.0)
+        
+        # Apply phase-specific freezing
+        self._apply_phase_freezing()
+    
+    def _apply_phase_freezing(self):
+        """Apply freezing based on current phase."""
+        freeze_modules = self.phase_config.get("freeze", [])
+        
+        for module_name in freeze_modules:
+            module = self._get_module_by_name(module_name)
+            if module is not None:
+                for param in module.parameters():
+                    param.requires_grad = False
+                logger.info(f"Phase {self.current_phase}: Froze {module_name}")
+    
+    def _get_module_by_name(self, name: str):
+        """Get module by name string."""
+        parts = name.split(".")
+        module = self.model
+        
+        for part in parts:
+            if hasattr(module, part):
+                module = getattr(module, part)
+            else:
+                return None
+        
+        return module
+    
+    def forward(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        """Forward pass."""
+        outputs = self.model(
+            pixel_values=batch["images"],
+            texts=batch["texts"],
+            chexbert_labels=batch.get("chexbert_labels"),
+            chexbert_mask=batch.get("chexbert_mask"),
+        )
+        return outputs
+    
+    def _compute_total_loss(
+        self,
+        generation_loss: torch.Tensor,
+        auxiliary_loss: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """Compute weighted total loss."""
+        total_loss = self.generation_weight * generation_loss
+        
+        if auxiliary_loss is not None and self.auxiliary_weight > 0:
+            total_loss = total_loss + self.auxiliary_weight * auxiliary_loss
+        
+        return total_loss
+    
+    def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
+        """Training step."""
+        outputs = self.forward(batch)
+        
+        # Compute total loss
+        total_loss = self._compute_total_loss(
+            outputs["generation_loss"],
+            outputs["auxiliary_loss"],
+        )
+        
+        # Logging
+        self.log("train/loss", total_loss, prog_bar=True, sync_dist=True)
+        self.log("train/gen_loss", outputs["generation_loss"], sync_dist=True)
+        
+        if outputs["auxiliary_loss"] is not None:
+            self.log("train/aux_loss", outputs["auxiliary_loss"], sync_dist=True)
+        
+        if outputs["gate_values"] is not None:
+            gate_mean = outputs["gate_values"].mean()
+            self.log("train/gate_value", gate_mean, sync_dist=True)
+        
+        return total_loss
+    
+    def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> Dict[str, Any]:
+        """Validation step."""
+        outputs = self.forward(batch)
+        
+        total_loss = self._compute_total_loss(
+            outputs["generation_loss"],
+            outputs["auxiliary_loss"],
+        )
+        
+        # Logging
+        self.log("val/loss", total_loss, prog_bar=True, sync_dist=True)
+        self.log("val/gen_loss", outputs["generation_loss"], sync_dist=True)
+        
+        if outputs["auxiliary_loss"] is not None:
+            self.log("val/aux_loss", outputs["auxiliary_loss"], sync_dist=True)
+        
+        return {"val_loss": total_loss}
+    
+    def configure_optimizers(self):
+        """Configure optimizers and schedulers."""
+        optimizer_config = self.phase_config.get("optimizer", {})
+        scheduler_config = self.phase_config.get("scheduler", {})
+        
+        # Get trainable parameters
+        trainable_params = [p for p in self.parameters() if p.requires_grad]
+        
+        # Optimizer
+        optimizer = AdamW(
+            trainable_params,
+            lr=float(optimizer_config.get("lr", 1e-4)),
+            weight_decay=float(optimizer_config.get("weight_decay", 0.01)),
+            betas=tuple(optimizer_config.get("betas", [0.9, 0.999])),
+            eps=float(optimizer_config.get("eps", 1e-8)),
+        )
+        
+        # Scheduler
+        scheduler_type = scheduler_config.get("type", "cosine_with_warmup")
+        
+        if scheduler_type == "cosine_with_warmup":
+            warmup_steps = scheduler_config.get("warmup_steps", 500)
+            total_steps = self.trainer.estimated_stepping_batches
+            
+            scheduler = get_linear_schedule_with_warmup(
+                optimizer,
+                num_warmup_steps=warmup_steps,
+                num_training_steps=total_steps,
+            )
+            
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "step",
+                    "frequency": 1,
+                },
+            }
+        else:
+            # Cosine annealing without warmup
+            scheduler = CosineAnnealingLR(
+                optimizer,
+                T_max=self.trainer.max_epochs,
+                eta_min=float(scheduler_config.get("min_lr", 1e-7)),
+            )
+            
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "epoch",
+                    "frequency": 1,
+                },
+            }
+    
+    @torch.no_grad()
+    def generate(
+        self,
+        images: torch.Tensor,
+        max_length: int = 512,
+        num_beams: int = 4,
+        **kwargs,
+    ) -> List[str]:
+        """Generate reports from images."""
+        self.model.eval()
+        return self.model.generate(
+            pixel_values=images,
+            max_length=max_length,
+            num_beams=num_beams,
+            **kwargs,
+        )

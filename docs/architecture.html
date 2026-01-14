@@ -1,0 +1,1713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CheXQuery-MedVLM: Complete Architecture Documentation</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --secondary: #7c3aed;
+            --accent: #06b6d4;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --dark: #1e293b;
+            --light: #f8fafc;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            line-height: 1.7;
+            color: var(--dark);
+            background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            padding: 60px 20px;
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 15px;
+        }
+        
+        header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+        
+        .section {
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        
+        .section h2 {
+            color: var(--primary);
+            font-size: 1.8rem;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 3px solid var(--primary);
+        }
+        
+        .section h3 {
+            color: var(--secondary);
+            font-size: 1.4rem;
+            margin: 30px 0 15px 0;
+        }
+        
+        .section h4 {
+            color: var(--dark);
+            font-size: 1.1rem;
+            margin: 20px 0 10px 0;
+        }
+        
+        p {
+            margin-bottom: 15px;
+            text-align: justify;
+        }
+        
+        .highlight-box {
+            background: linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%);
+            border-left: 4px solid var(--primary);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        
+        .warning-box {
+            background: #fef3c7;
+            border-left: 4px solid var(--warning);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        
+        .diagram-container {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 30px;
+            margin: 25px 0;
+            overflow-x: auto;
+        }
+        
+        .flow-diagram {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .flow-box {
+            padding: 15px 30px;
+            border-radius: 10px;
+            text-align: center;
+            font-weight: 600;
+            min-width: 250px;
+            position: relative;
+        }
+        
+        .flow-box.input { background: #dbeafe; color: #1e40af; border: 2px solid #3b82f6; }
+        .flow-box.vision { background: #dcfce7; color: #166534; border: 2px solid #22c55e; }
+        .flow-box.query { background: #fef3c7; color: #92400e; border: 2px solid #f59e0b; }
+        .flow-box.attention { background: #fce7f3; color: #9d174d; border: 2px solid #ec4899; }
+        .flow-box.fusion { background: #e0e7ff; color: #3730a3; border: 2px solid #6366f1; }
+        .flow-box.decoder { background: #ccfbf1; color: #115e59; border: 2px solid #14b8a6; }
+        .flow-box.output { background: #fee2e2; color: #991b1b; border: 2px solid #ef4444; }
+        
+        .arrow {
+            font-size: 24px;
+            color: var(--dark);
+        }
+        
+        .side-by-side {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        th {
+            background: var(--primary);
+            color: white;
+            font-weight: 600;
+        }
+        
+        tr:nth-child(even) {
+            background: #f8fafc;
+        }
+        
+        tr:hover {
+            background: #eff6ff;
+        }
+        
+        code {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Consolas', monospace;
+            font-size: 0.9em;
+        }
+        
+        pre {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 15px 0;
+            font-family: 'Consolas', monospace;
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
+        
+        .component-card {
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 25px;
+            margin: 15px 0;
+        }
+        
+        .component-card h4 {
+            color: var(--primary);
+            margin-bottom: 15px;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            margin-right: 8px;
+        }
+        
+        .badge.blue { background: #dbeafe; color: #1e40af; }
+        .badge.green { background: #dcfce7; color: #166534; }
+        .badge.purple { background: #f3e8ff; color: #6b21a8; }
+        .badge.orange { background: #ffedd5; color: #9a3412; }
+        
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        
+        .toc {
+            background: #f8fafc;
+            padding: 25px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+        }
+        
+        .toc h3 {
+            margin-bottom: 15px;
+            color: var(--dark);
+        }
+        
+        .toc ul {
+            list-style: none;
+        }
+        
+        .toc li {
+            padding: 8px 0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .toc a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+        
+        .toc a:hover {
+            text-decoration: underline;
+        }
+        
+        .math {
+            font-family: 'Times New Roman', serif;
+            font-style: italic;
+            background: #f1f5f9;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            margin: 15px 0;
+        }
+        
+        .dimension {
+            color: var(--secondary);
+            font-weight: 600;
+        }
+        
+        footer {
+            text-align: center;
+            padding: 40px;
+            color: #64748b;
+        }
+        
+        .arch-svg {
+            width: 100%;
+            max-width: 900px;
+            margin: 0 auto;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🏥 CheXQuery-MedVLM</h1>
+        <p>Anatomical Region-Guided Medical Vision-Language Model for Chest X-ray Report Generation</p>
+        <p style="margin-top: 15px; font-size: 0.9rem;">Complete Architecture Documentation & Methodology</p>
+    </header>
+    
+    <div class="container">
+        <!-- Table of Contents -->
+        <div class="toc">
+            <h3>📑 Table of Contents</h3>
+            <ul>
+                <li><a href="#overview">1. Overview & Motivation</a></li>
+                <li><a href="#architecture">2. Complete Architecture Diagram</a></li>
+                <li><a href="#components">3. Component-by-Component Breakdown</a></li>
+                <li><a href="#data">4. Data Pipeline</a></li>
+                <li><a href="#training">5. Three-Phase Training Strategy</a></li>
+                <li><a href="#loss">6. Loss Functions</a></li>
+                <li><a href="#evaluation">7. Evaluation Metrics</a></li>
+                <li><a href="#inference">8. Inference Pipeline</a></li>
+                <li><a href="#novelty">9. Novel Contributions</a></li>
+                <li><a href="#specs">10. Technical Specifications</a></li>
+            </ul>
+        </div>
+        
+        <!-- Section 1: Overview -->
+        <div class="section" id="overview">
+            <h2>1. Overview & Motivation</h2>
+            
+            <h3>1.1 What is CheXQuery-MedVLM?</h3>
+            <p>
+                <strong>CheXQuery-MedVLM</strong> is a Vision-Language Model (VLM) specifically designed to generate 
+                radiology reports from chest X-ray images. Unlike generic image captioning models, this architecture 
+                is built with medical domain knowledge embedded directly into its structure.
+            </p>
+            
+            <div class="highlight-box">
+                <strong>🎯 Main Goal:</strong> Given a chest X-ray image, automatically generate a structured medical 
+                report in the format: <code>Findings: [detailed observations] | Impression: [clinical conclusion]</code>
+            </div>
+            
+            <h3>1.2 Why Do We Need a Special Architecture?</h3>
+            <p>Standard vision-language models have several limitations for medical report generation:</p>
+            
+            <div class="grid-2">
+                <div class="component-card">
+                    <h4>❌ Problem 1: Generic Visual Features</h4>
+                    <p>Normal VLMs extract general image features. They don't know that in chest X-rays, 
+                    specific regions (lungs, heart, spine) have specific clinical meanings.</p>
+                </div>
+                <div class="component-card">
+                    <h4>❌ Problem 2: Missing Clinical Knowledge</h4>
+                    <p>Standard models don't understand medical conditions like "cardiomegaly" or "pneumonia". 
+                    They treat all words equally without clinical context.</p>
+                </div>
+                <div class="component-card">
+                    <h4>❌ Problem 3: Single Global Token</h4>
+                    <p>Many VLMs compress the entire image into one token (CLS token), losing important 
+                    spatial information about where abnormalities are located.</p>
+                </div>
+                <div class="component-card">
+                    <h4>❌ Problem 4: No Clinical Accuracy Check</h4>
+                    <p>Standard models only optimize for text similarity, not for clinical correctness. 
+                    A fluent but medically wrong report would score high.</p>
+                </div>
+            </div>
+            
+            <h3>1.3 Our Solution: Query-Based Architecture</h3>
+            <p>
+                CheXQuery-MedVLM solves these problems by introducing <strong>learnable queries</strong> that 
+                specifically look for medical conditions and anatomical regions in the image. Think of it like 
+                having 20 expert radiologists, each looking for something specific in the X-ray.
+            </p>
+        </div>
+        
+        <!-- Section 2: Architecture Diagram -->
+        <div class="section" id="architecture">
+            <h2>2. Complete Architecture Diagram</h2>
+            
+            <h3>2.1 High-Level Overview</h3>
+            <div class="diagram-container">
+                <svg class="arch-svg" viewBox="0 0 900 700" xmlns="http://www.w3.org/2000/svg">
+                    <!-- Background -->
+                    <defs>
+                        <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+                            <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+                        </linearGradient>
+                        <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" style="stop-color:#10b981;stop-opacity:1" />
+                            <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:1" />
+                        </linearGradient>
+                    </defs>
+                    
+                    <!-- Input Image -->
+                    <rect x="50" y="30" width="120" height="120" fill="#dbeafe" stroke="#3b82f6" stroke-width="3" rx="10"/>
+                    <text x="110" y="95" text-anchor="middle" font-size="14" font-weight="bold" fill="#1e40af">Chest X-ray</text>
+                    <text x="110" y="115" text-anchor="middle" font-size="11" fill="#1e40af">[3, 384, 384]</text>
+                    
+                    <!-- Arrow to Vision Encoder -->
+                    <path d="M 170 90 L 220 90" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- Vision Encoder Box -->
+                    <rect x="230" y="20" width="200" height="140" fill="#dcfce7" stroke="#22c55e" stroke-width="3" rx="10"/>
+                    <text x="330" y="50" text-anchor="middle" font-size="16" font-weight="bold" fill="#166534">Vision Encoder</text>
+                    <text x="330" y="75" text-anchor="middle" font-size="12" fill="#166534">SigLIP + LoRA</text>
+                    <rect x="250" y="90" width="70" height="50" fill="#bbf7d0" stroke="#22c55e" stroke-width="1" rx="5"/>
+                    <text x="285" y="115" text-anchor="middle" font-size="10" font-weight="bold" fill="#166534">CLS</text>
+                    <text x="285" y="130" text-anchor="middle" font-size="9" fill="#166534">[1, 768]</text>
+                    <rect x="340" y="90" width="70" height="50" fill="#bbf7d0" stroke="#22c55e" stroke-width="1" rx="5"/>
+                    <text x="375" y="115" text-anchor="middle" font-size="10" font-weight="bold" fill="#166534">Patches</text>
+                    <text x="375" y="130" text-anchor="middle" font-size="9" fill="#166534">[576, 768]</text>
+                    
+                    <!-- Query Modules -->
+                    <rect x="500" y="20" width="180" height="60" fill="#fef3c7" stroke="#f59e0b" stroke-width="3" rx="10"/>
+                    <text x="590" y="45" text-anchor="middle" font-size="13" font-weight="bold" fill="#92400e">Condition Queries</text>
+                    <text x="590" y="65" text-anchor="middle" font-size="11" fill="#92400e">14 × 768 (BioBERT init)</text>
+                    
+                    <rect x="500" y="100" width="180" height="60" fill="#fef3c7" stroke="#f59e0b" stroke-width="3" rx="10"/>
+                    <text x="590" y="125" text-anchor="middle" font-size="13" font-weight="bold" fill="#92400e">Anatomical Queries</text>
+                    <text x="590" y="145" text-anchor="middle" font-size="11" fill="#92400e">6 × 768 (Xavier init)</text>
+                    
+                    <!-- Arrows to Cross Attention -->
+                    <path d="M 375 140 L 375 210" stroke="#64748b" stroke-width="2"/>
+                    <path d="M 590 160 L 590 200 L 500 200 L 500 230" stroke="#64748b" stroke-width="2"/>
+                    
+                    <!-- Cross Attention -->
+                    <rect x="230" y="220" width="350" height="100" fill="#fce7f3" stroke="#ec4899" stroke-width="3" rx="10"/>
+                    <text x="405" y="250" text-anchor="middle" font-size="16" font-weight="bold" fill="#9d174d">Cross-Attention Module</text>
+                    <text x="405" y="275" text-anchor="middle" font-size="12" fill="#9d174d">2 Layers × 8 Heads</text>
+                    <text x="405" y="300" text-anchor="middle" font-size="11" fill="#9d174d">Q: Queries [20, 768] → K,V: Patches [576, 768]</text>
+                    
+                    <!-- Arrow down -->
+                    <path d="M 405 320 L 405 360" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- Split for auxiliary -->
+                    <rect x="600" y="250" width="120" height="50" fill="#fee2e2" stroke="#ef4444" stroke-width="2" rx="8"/>
+                    <text x="660" y="275" text-anchor="middle" font-size="11" font-weight="bold" fill="#991b1b">Auxiliary Head</text>
+                    <text x="660" y="290" text-anchor="middle" font-size="9" fill="#991b1b">14-class MLP</text>
+                    <path d="M 580 270 L 600 270" stroke="#64748b" stroke-width="2" stroke-dasharray="5,5"/>
+                    
+                    <!-- Gated Fusion -->
+                    <rect x="230" y="370" width="350" height="110" fill="#e0e7ff" stroke="#6366f1" stroke-width="3" rx="10"/>
+                    <text x="405" y="400" text-anchor="middle" font-size="16" font-weight="bold" fill="#3730a3">Gated Fusion Module</text>
+                    <text x="300" y="430" text-anchor="middle" font-size="11" fill="#3730a3">Gate Network</text>
+                    <text x="300" y="445" text-anchor="middle" font-size="9" fill="#3730a3">σ(MLP([CLS; Q_mean]))</text>
+                    <text x="500" y="430" text-anchor="middle" font-size="11" fill="#3730a3">Query Pooling</text>
+                    <text x="500" y="445" text-anchor="middle" font-size="9" fill="#3730a3">20 → 10 tokens</text>
+                    <text x="405" y="470" text-anchor="middle" font-size="10" fill="#3730a3">Output: 1 CLS + 10 pooled = 11 visual tokens</text>
+                    
+                    <!-- Arrow down -->
+                    <path d="M 405 480 L 405 520" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- Prompt to Decoder -->
+                    <rect x="610" y="500" width="210" height="60" fill="#fde68a" stroke="#f59e0b" stroke-width="2" rx="10"/>
+                    <text x="715" y="525" text-anchor="middle" font-size="12" font-weight="bold" fill="#92400e">Prompt (Decoder Prefix)</text>
+                    <text x="715" y="545" text-anchor="middle" font-size="10" fill="#92400e">"Findings: ... | Impression: ..."</text>
+                    <path d="M 610 530 L 560 530 L 560 560" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- Text Decoder -->
+                    <rect x="230" y="530" width="350" height="80" fill="#ccfbf1" stroke="#14b8a6" stroke-width="3" rx="10"/>
+                    <text x="405" y="560" text-anchor="middle" font-size="16" font-weight="bold" fill="#115e59">Text Decoder</text>
+                    <text x="405" y="585" text-anchor="middle" font-size="12" fill="#115e59">Flan-T5-Base + LoRA</text>
+                    <text x="405" y="600" text-anchor="middle" font-size="10" fill="#115e59">Visual tokens as encoder output → Cross-attention → Generate</text>
+                    
+                    <!-- Arrow down -->
+                    <path d="M 405 610 L 405 640" stroke="#64748b" stroke-width="2" marker-end="url(#arrowhead)"/>
+                    
+                    <!-- Output -->
+                    <rect x="200" y="650" width="400" height="40" fill="#fee2e2" stroke="#ef4444" stroke-width="3" rx="10"/>
+                    <text x="400" y="675" text-anchor="middle" font-size="13" font-weight="bold" fill="#991b1b">Findings: [text] | Impression: [text]</text>
+                    
+                    <!-- Arrow marker -->
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+                        </marker>
+                    </defs>
+                    
+                    <!-- Labels -->
+                    <text x="750" y="90" font-size="10" fill="#64748b">Frozen + LoRA</text>
+                    <text x="750" y="270" font-size="10" fill="#64748b">Trainable</text>
+                    <text x="750" y="420" font-size="10" fill="#64748b">Trainable</text>
+                    <text x="750" y="560" font-size="10" fill="#64748b">Frozen + LoRA + Prompt</text>
+                </svg>
+            </div>
+            
+            <h3>2.2 Data Flow Summary</h3>
+            <div class="flow-diagram">
+                <div class="flow-box input">📷 Input Image: [Batch, 3, 384, 384]</div>
+                <div class="arrow">↓</div>
+                <div class="flow-box vision">🔍 SigLIP Vision Encoder → CLS [B, 768] + Patches [B, 576, 768]</div>
+                <div class="arrow">↓</div>
+                <div class="side-by-side">
+                    <div class="flow-box query">🏥 Condition Queries [B, 14, 768]</div>
+                    <div class="flow-box query">🫁 Anatomical Queries [B, 6, 768]</div>
+                </div>
+                <div class="arrow">↓ Concatenate → [B, 20, 768]</div>
+                <div class="flow-box attention">🎯 Cross-Attention: Queries attend to Patches → [B, 20, 768]</div>
+                <div class="arrow">↓</div>
+                <div class="flow-box fusion">⚡ Gated Fusion + Pooling → [B, 11, 768]</div>
+                <div class="arrow">↓</div>
+                <div class="flow-box decoder">📝 Flan-T5 Decoder (cross-attends to visual tokens)</div>
+                <div class="arrow">↓</div>
+                <div class="flow-box output">📋 Generated Report: "Findings: ... | Impression: ..."</div>
+            </div>
+        </div>
+        
+        <!-- Section 3: Components -->
+        <div class="section" id="components">
+            <h2>3. Component-by-Component Breakdown</h2>
+            
+            <!-- 3.1 Vision Encoder -->
+            <h3>3.1 Vision Encoder (SigLIP)</h3>
+            
+            <div class="highlight-box">
+                <strong>📁 File:</strong> <code>models/vision_encoder.py</code><br>
+                <strong>🎯 Purpose:</strong> Extract visual features from chest X-ray images
+            </div>
+            
+            <h4>What is SigLIP?</h4>
+            <p>
+                SigLIP (Sigmoid Loss for Image-text Pre-training) is a vision encoder from Google, pre-trained on 
+                millions of image-text pairs. Unlike CLIP which uses contrastive loss, SigLIP uses sigmoid loss 
+                which works better for medical images. We use the <code>google/siglip-base-patch16-384</code> variant.
+            </p>
+            
+            <h4>How Does It Work?</h4>
+            <ol>
+                <li><strong>Patch Embedding:</strong> The 384×384 image is divided into 16×16 patches, giving us 
+                    (384/16)² = 576 patches. Each patch becomes a 768-dimensional vector.</li>
+                <li><strong>Position Embedding:</strong> Position information is added so the model knows where 
+                    each patch came from.</li>
+                <li><strong>Transformer Layers:</strong> 12 transformer layers process these patches with 
+                    self-attention.</li>
+                <li><strong>Output:</strong> We get 577 tokens: 1 CLS token (global summary) + 576 patch tokens 
+                    (local details).</li>
+            </ol>
+            
+            <div class="component-card">
+                <h4>🔧 LoRA (Low-Rank Adaptation)</h4>
+                <p>
+                    Instead of fine-tuning all 86M parameters of SigLIP (expensive!), we use LoRA which adds 
+                    small trainable matrices to the Query (Q) and Value (V) projections in attention layers. 
+                    This reduces trainable parameters from 86M to ~300K while maintaining performance.
+                </p>
+                <pre>
+LoRA Config:
+- Rank (r): 8
+- Alpha: 16  
+- Dropout: 0.05
+- Target: ["q_proj", "v_proj"]</pre>
+            </div>
+            
+            <table>
+                <tr>
+                    <th>Specification</th>
+                    <th>Value</th>
+                    <th>Explanation</th>
+                </tr>
+                <tr>
+                    <td>Model</td>
+                    <td>google/siglip-base-patch16-384</td>
+                    <td>Base variant, 16×16 patches, 384px input</td>
+                </tr>
+                <tr>
+                    <td>Input Size</td>
+                    <td>[Batch, 3, 384, 384]</td>
+                    <td>RGB image, 384×384 pixels</td>
+                </tr>
+                <tr>
+                    <td>Patch Size</td>
+                    <td>16 × 16</td>
+                    <td>Each patch is 16×16 pixels</td>
+                </tr>
+                <tr>
+                    <td>Number of Patches</td>
+                    <td>576</td>
+                    <td>(384/16)² = 24 × 24 = 576</td>
+                </tr>
+                <tr>
+                    <td>Hidden Dimension</td>
+                    <td>768</td>
+                    <td>Each token is 768-dimensional</td>
+                </tr>
+                <tr>
+                    <td>CLS Output</td>
+                    <td>[Batch, 768]</td>
+                    <td>Global image representation</td>
+                </tr>
+                <tr>
+                    <td>Patch Output</td>
+                    <td>[Batch, 576, 768]</td>
+                    <td>Local patch representations</td>
+                </tr>
+            </table>
+            
+            <!-- 3.2 Condition Queries -->
+            <h3>3.2 Condition Query Module (Novel Contribution #1)</h3>
+            
+            <div class="highlight-box">
+                <strong>📁 File:</strong> <code>models/condition_queries.py</code><br>
+                <strong>🎯 Purpose:</strong> Learn to detect 14 CheXbert medical conditions in images
+            </div>
+            
+            <h4>What Are Condition Queries?</h4>
+            <p>
+                These are 14 learnable vectors, one for each medical condition that CheXbert (a clinical NLP model) 
+                can detect. Instead of randomly initializing these vectors, we initialize them using BioBERT 
+                embeddings of the condition names. This gives the model a "head start" - it already knows 
+                what "pneumonia" or "cardiomegaly" means linguistically.
+            </p>
+            
+            <h4>The 14 CheXbert Conditions:</h4>
+            <div class="grid-2">
+                <div class="component-card">
+                    <span class="badge green">0</span> No Finding<br>
+                    <span class="badge blue">1</span> Enlarged Cardiomediastinum<br>
+                    <span class="badge blue">2</span> Cardiomegaly<br>
+                    <span class="badge blue">3</span> Lung Opacity<br>
+                    <span class="badge blue">4</span> Lung Lesion<br>
+                    <span class="badge blue">5</span> Edema<br>
+                    <span class="badge blue">6</span> Consolidation<br>
+                </div>
+                <div class="component-card">
+                    <span class="badge blue">7</span> Pneumonia<br>
+                    <span class="badge blue">8</span> Atelectasis<br>
+                    <span class="badge blue">9</span> Pneumothorax<br>
+                    <span class="badge blue">10</span> Pleural Effusion<br>
+                    <span class="badge blue">11</span> Pleural Other<br>
+                    <span class="badge blue">12</span> Fracture<br>
+                    <span class="badge blue">13</span> Support Devices<br>
+                </div>
+            </div>
+            
+            <h4>Initialization Process:</h4>
+            <pre>
+# For each condition name (e.g., "pneumonia"):
+1. Tokenize with BioBERT tokenizer
+2. Pass through BioBERT model
+3. Extract CLS token embedding [768]
+4. Use as initial value for that query
+
+Result: 14 queries × 768 dimensions = [14, 768] tensor</pre>
+            
+            <!-- 3.3 Anatomical Queries -->
+            <h3>3.3 Anatomical Query Module (Novel Contribution #2)</h3>
+            
+            <div class="highlight-box">
+                <strong>📁 File:</strong> <code>models/anatomical_queries.py</code><br>
+                <strong>🎯 Purpose:</strong> Learn to focus on specific anatomical regions of the chest
+            </div>
+            
+            <h4>What Are Anatomical Queries?</h4>
+            <p>
+                These are 6 learnable vectors representing different anatomical regions of a chest X-ray. 
+                Unlike condition queries, these are initialized randomly (Xavier uniform) because there's 
+                no pre-trained model that maps region names to embeddings. Through training, each query 
+                learns to attend to its corresponding anatomical region.
+            </p>
+            
+            <h4>The 6 Anatomical Regions:</h4>
+            <table>
+                <tr>
+                    <th>Query #</th>
+                    <th>Region</th>
+                    <th>What It Looks For</th>
+                </tr>
+                <tr>
+                    <td>0</td>
+                    <td>Cardiac</td>
+                    <td>Heart size, shape, cardiac silhouette</td>
+                </tr>
+                <tr>
+                    <td>1</td>
+                    <td>Left Lung</td>
+                    <td>Left lung field abnormalities</td>
+                </tr>
+                <tr>
+                    <td>2</td>
+                    <td>Right Lung</td>
+                    <td>Right lung field abnormalities</td>
+                </tr>
+                <tr>
+                    <td>3</td>
+                    <td>Mediastinum</td>
+                    <td>Mediastinal structures, width</td>
+                </tr>
+                <tr>
+                    <td>4</td>
+                    <td>Diaphragm</td>
+                    <td>Diaphragm position, costophrenic angles</td>
+                </tr>
+                <tr>
+                    <td>5</td>
+                    <td>Spine</td>
+                    <td>Spine alignment, bony structures</td>
+                </tr>
+            </table>
+            
+            <!-- 3.4 Cross Attention -->
+            <h3>3.4 Cross-Attention Module</h3>
+            
+            <div class="highlight-box">
+                <strong>📁 File:</strong> <code>models/cross_attention.py</code><br>
+                <strong>🎯 Purpose:</strong> Allow queries to "look at" relevant parts of the image
+            </div>
+            
+            <h4>What is Cross-Attention?</h4>
+            <p>
+                Cross-attention is the mechanism that connects our queries (what we're looking for) with 
+                the image patches (where we're looking). Each query can attend to all 576 patches and 
+                learn which patches are relevant for that query.
+            </p>
+            
+            <h4>How It Works:</h4>
+            <div class="diagram-container">
+                <pre>
+Input:
+  - Queries: [Batch, 20, 768]   (14 condition + 6 anatomical)
+  - Patches: [Batch, 576, 768]  (from vision encoder)
+
+Process:
+  Q = Queries × W_q            # Query projection
+  K = Patches × W_k            # Key projection  
+  V = Patches × W_v            # Value projection
+  
+  Attention = softmax(Q × K^T / √768)   # [20, 576] attention weights
+  Output = Attention × V                 # [20, 768] attended features
+
+Result:
+  - Each query now contains information about relevant patches
+  - Attention weights show which patches each query focused on</pre>
+            </div>
+            
+            <h4>Architecture Details:</h4>
+            <table>
+                <tr>
+                    <th>Parameter</th>
+                    <th>Value</th>
+                    <th>Purpose</th>
+                </tr>
+                <tr>
+                    <td>Number of Layers</td>
+                    <td>2</td>
+                    <td>Stack 2 cross-attention layers for better refinement</td>
+                </tr>
+                <tr>
+                    <td>Number of Heads</td>
+                    <td>8</td>
+                    <td>Multi-head attention for different attention patterns</td>
+                </tr>
+                <tr>
+                    <td>Hidden Dimension</td>
+                    <td>768</td>
+                    <td>Same as query/patch dimension</td>
+                </tr>
+                <tr>
+                    <td>FFN Dimension</td>
+                    <td>3072</td>
+                    <td>Feed-forward network expansion (4×768)</td>
+                </tr>
+                <tr>
+                    <td>Dropout</td>
+                    <td>0.1</td>
+                    <td>Regularization</td>
+                </tr>
+            </table>
+            
+            <h4>Each Layer Contains:</h4>
+            <pre>
+CrossAttentionLayer:
+├── MultiheadAttention(embed_dim=768, num_heads=8)
+├── LayerNorm(768)
+├── FFN:
+│   ├── Linear(768 → 3072)
+│   ├── GELU activation
+│   ├── Dropout(0.1)
+│   ├── Linear(3072 → 768)
+│   └── Dropout(0.1)
+└── LayerNorm(768)</pre>
+            
+            <!-- 3.5 Gated Fusion -->
+            <h3>3.5 Gated Fusion Module (Novel Contribution #3)</h3>
+            
+            <div class="highlight-box">
+                <strong>📁 File:</strong> <code>models/gated_fusion.py</code><br>
+                <strong>🎯 Purpose:</strong> Intelligently combine global (CLS) and local (query) information
+            </div>
+            
+            <h4>Why Do We Need Gating?</h4>
+            <p>
+                We have two types of visual information:
+            </p>
+            <ul>
+                <li><strong>CLS Token:</strong> Global summary of the entire image</li>
+                <li><strong>Query Embeddings:</strong> Local, condition-specific information</li>
+            </ul>
+            <p>
+                For some images (normal X-rays), global information might be enough. For others (multiple 
+                abnormalities), local query information is crucial. The gate learns to adaptively balance these.
+            </p>
+            
+            <h4>Gate Mechanism:</h4>
+            <div class="math">
+                gate = σ(MLP([CLS; mean(Queries)]))
+                <br><br>
+                Where σ is sigmoid, output is between 0 and 1
+            </div>
+            
+            <pre>
+Gate Network:
+├── Input: [CLS (768) ; Query_mean (768)] = [1536]
+├── Linear(1536 → 512)
+├── GELU
+├── Dropout(0.1)
+├── Linear(512 → 1)
+└── Sigmoid → gate value ∈ [0, 1]
+
+CLS_gated = gate × CLS
+Queries_weighted = (1 - gate) × Queries</pre>
+            
+            <h4>Query Pooling:</h4>
+            <p>
+                We have 20 query embeddings, but passing all 20 to the decoder is expensive. We use learned 
+                pooling to compress them to 10 tokens while preserving important information.
+            </p>
+            
+            <pre>
+Query Pooling:
+├── Learnable Pool Queries: [10, 768]
+├── Cross-Attention: Pool Queries attend to 20 Query Embeddings
+└── Output: [10, 768] pooled tokens
+
+Final Visual Tokens:
+├── 1 CLS token (gated)
+├── 10 pooled query tokens
+└── Total: 11 tokens × 768 dimensions</pre>
+            
+            <!-- 3.6 Text Decoder -->
+            <h3>3.6 Text Decoder (Flan-T5)</h3>
+            
+            <div class="highlight-box">
+                <strong>📁 File:</strong> <code>models/text_decoder.py</code><br>
+                <strong>🎯 Purpose:</strong> Generate the medical report text from visual tokens
+            </div>
+            
+            <h4>What is Flan-T5?</h4>
+            <p>
+                Flan-T5 is Google's instruction-tuned version of T5 (Text-to-Text Transfer Transformer). 
+                It's trained on many tasks and can follow instructions well. We use the "base" variant 
+                with 248M parameters.
+            </p>
+            
+            <h4>Why Flan-T5?</h4>
+            <ul>
+                <li><strong>Encoder-Decoder Architecture:</strong> Perfect for our use case - visual tokens 
+                    go to encoder, text is generated by decoder</li>
+                <li><strong>Cross-Attention:</strong> Built-in cross-attention lets decoder attend to visual tokens</li>
+                <li><strong>Instruction Following:</strong> Better at generating structured output</li>
+                <li><strong>Efficient:</strong> Base model fits on single GPU with LoRA</li>
+            </ul>
+            
+            <h4>How We Use It:</h4>
+            <pre>
+Standard T5:
+  Encoder(text) → hidden states → Decoder → output text
+
+Our Usage:
+  Visual Tokens (11 × 768) → used AS encoder hidden states → Decoder → report
+
+This means:
+  - We bypass T5's text encoder entirely
+  - Our 11 visual tokens act as if they were encoded text
+  - T5's decoder cross-attends to these visual tokens
+  - Generates report autoregressively</pre>
+
+            <div class="component-card">
+                <h4>🧭 Prompt-Guided Decoding (Now Enabled)</h4>
+                <p>
+                    We prepend a short prompt to the decoder input to enforce the structured format:
+                    <code>"Findings: ... | Impression: ..."</code>. The prompt is used in both training
+                    (prepended to targets) and inference (as decoder start tokens), so the decoder
+                    consistently follows the required template.
+                </p>
+                <pre>
+Prompt (from config):
+"Generate a structured radiology report for this chest X-ray image.
+Format: Findings: [detailed observations] | Impression: [clinical conclusion]
+Report:"
+
+Training:
+  targets = prompt + "\n" + ground_truth_text
+  → tokenizer → decoder_input_ids/labels
+
+Inference:
+  decoder_input_ids = tokenizer(prompt)
+  generate(...) uses prompt as the decoder prefix
+                </pre>
+                <p>
+                    Benefit: Strongly enforces the desired output structure, reducing format drift
+                    while keeping the visual tokens as the primary content source.
+                </p>
+            </div>
+            
+            <h4>LoRA Configuration:</h4>
+            <table>
+                <tr>
+                    <th>Parameter</th>
+                    <th>Value</th>
+                </tr>
+                <tr>
+                    <td>Rank (r)</td>
+                    <td>16</td>
+                </tr>
+                <tr>
+                    <td>Alpha</td>
+                    <td>32</td>
+                </tr>
+                <tr>
+                    <td>Dropout</td>
+                    <td>0.05</td>
+                </tr>
+                <tr>
+                    <td>Target Modules</td>
+                    <td>["q", "k", "v", "o"]</td>
+                </tr>
+            </table>
+            
+            <!-- 3.7 Auxiliary Head -->
+            <h3>3.7 Auxiliary Classification Head</h3>
+            
+            <div class="highlight-box">
+                <strong>📁 File:</strong> <code>models/auxiliary_head.py</code><br>
+                <strong>🎯 Purpose:</strong> Multi-label classification for clinical accuracy
+            </div>
+            
+            <h4>Why Auxiliary Classification?</h4>
+            <p>
+                The main loss (text generation) optimizes for word-level accuracy. But we also want 
+                <strong>clinical accuracy</strong> - correctly identifying which conditions are present. 
+                The auxiliary head adds a classification task that directly predicts the 14 CheXbert labels.
+            </p>
+            
+            <h4>Architecture:</h4>
+            <pre>
+Input: Condition Query Embeddings [Batch, 14, 768]
+
+For each condition query (independently):
+├── Linear(768 → 384)
+├── GELU
+├── Dropout(0.2)
+├── Linear(384 → 1)
+└── Output: logit for that condition
+
+Output: [Batch, 14] logits
+Loss: Binary Cross-Entropy (multi-label)</pre>
+            
+            <h4>How It Helps:</h4>
+            <ul>
+                <li>Forces condition queries to actually learn condition-relevant features</li>
+                <li>Provides direct clinical supervision</li>
+                <li>Acts as regularization for the main task</li>
+                <li>Enables CheXbert F1 evaluation during training</li>
+            </ul>
+        </div>
+        
+        <!-- Section 4: Data Pipeline -->
+        <div class="section" id="data">
+            <h2>4. Data Pipeline</h2>
+            
+            <h3>4.1 Dataset: IU X-ray</h3>
+            <p>
+                We use the Indiana University Chest X-ray dataset, available on Kaggle. It contains 
+                chest X-ray images paired with radiology reports.
+            </p>
+            
+            <table>
+                <tr>
+                    <th>Property</th>
+                    <th>Value</th>
+                </tr>
+                <tr>
+                    <td>Dataset</td>
+                    <td>raddar/chest-xrays-indiana-university</td>
+                </tr>
+                <tr>
+                    <td>Total Images</td>
+                    <td>~7,470</td>
+                </tr>
+                <tr>
+                    <td>Total Reports</td>
+                    <td>~3,955</td>
+                </tr>
+                <tr>
+                    <td>Projection Types</td>
+                    <td>Frontal, Lateral</td>
+                </tr>
+                <tr>
+                    <td>We Use</td>
+                    <td>Frontal only</td>
+                </tr>
+            </table>
+            
+            <h3>4.2 Data Splits</h3>
+            <pre>
+Split Strategy: Patient-level (no data leakage)
+├── Train: 70%
+├── Validation: 15%
+└── Test: 15%
+
+Why patient-level?
+- Same patient may have multiple X-rays
+- If train/test have same patient, model memorizes patient patterns
+- Patient-level split ensures generalization</pre>
+            
+            <h3>4.3 Image Preprocessing</h3>
+            
+            <div class="warning-box">
+                <strong>⚠️ Medical Imaging Constraint:</strong> X-ray augmentations must preserve anatomical validity.
+                NO horizontal flipping (heart is on LEFT side), minimal rotation (patients positioned consistently).
+            </div>
+            
+            <pre>
+Training Augmentations (Medically-Valid):
+├── Resize to 384×384
+├── ❌ NO Horizontal Flip (would put heart on wrong side!)
+├── Random Rotation (±5°) - conservative for positioning variance
+├── Random Affine (translate 3%, scale 97-103%) - minimal
+├── Color Jitter (brightness/contrast ±5%) - conservative
+├── ToTensor
+└── Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])
+
+Validation/Test:
+├── Resize to 384×384
+├── ToTensor
+└── Normalize(mean=[0.5,0.5,0.5], std=[0.5,0.5,0.5])
+
+Why NO Horizontal Flip?
+├── Heart is anatomically on the LEFT side
+├── Flipping would create "dextrocardia" (heart on right) - extremely rare
+├── Anatomical queries would learn incorrect spatial relationships
+└── Model would generate clinically incorrect reports</pre>
+            
+            <h3>4.4 Text Preprocessing</h3>
+            <pre>
+Input Report (from CSV):
+  findings: "The heart is normal in size..."
+  impression: "No acute cardiopulmonary abnormality."
+
+Output Format:
+  "Findings: The heart is normal in size... | Impression: No acute cardiopulmonary abnormality."
+
+Cleaning Steps:
+├── Strip whitespace
+├── Remove sentences containing PHI markers (XXXX)
+│   └── Prevents model from generating placeholder text
+├── Normalize whitespace
+└── Fix sentence spacing
+
+Why remove PHI sentences instead of replacing?
+├── If replaced with [REDACTED], model learns to generate it
+├── Removing entire sentence preserves clean training signal
+└── Generated reports won't contain placeholder artifacts</pre>
+            
+            <h3>4.5 DataLoader Output</h3>
+            <pre>
+Each batch contains:
+{
+    'images': Tensor[B, 3, 384, 384],      # Preprocessed images
+    'texts': List[str],                     # Target report strings
+    'chexbert_labels': Tensor[B, 14],      # Binary labels (0/1)
+    'metadata': List[dict]                  # uid, filename, etc.
+}</pre>
+        </div>
+        
+        <!-- Section 5: Training -->
+        <div class="section" id="training">
+            <h2>5. Three-Phase Training Strategy</h2>
+            
+            <div class="highlight-box">
+                <strong>📁 Files:</strong> <code>training/lightning_module.py</code>, <code>training/trainer.py</code><br>
+                <strong>🎯 Purpose:</strong> Gradually train components for stable learning
+            </div>
+            
+            <h3>Why Three Phases?</h3>
+            <p>
+                Training everything at once is unstable—randomly initialized queries can disrupt the pre-trained
+                encoder/decoder. We use a <strong>staged training schedule</strong>: first align queries while
+                encoders/decoder are frozen, then fine-tune end-to-end. This is a pragmatic stabilization step,
+                not a separate curriculum-learning algorithm.
+            </p>
+            <div class="warning-box">
+                <strong>Why NOT fine-tune SigLIP in Phase 1?</strong><br>
+                <ul style="margin-left: 15px;">
+                    <li><strong>Gradient dominance:</strong> Trainable SigLIP (~86M params) would absorb the signal; tiny queries (~15K params) wouldn’t learn sharp attention.</li>
+                    <li><strong>Shortcut learning:</strong> SigLIP could encode disease labels directly; queries become unnecessary → attention diffuse, grounding lost.</li>
+                    <li><strong>Query collapse:</strong> Queries degenerate into bias vectors; cross-attention becomes soft pooling, hurting interpretability.</li>
+                </ul>
+                <p><strong>Design intent:</strong> Phase 1 keeps SigLIP frozen so alignment is “hard,” forcing queries to truly discriminate and attend sharply. Phase 2 then gently adapts SigLIP via LoRA—refining cues while preserving query-based reasoning and stability.</p>
+                <p><strong>Analogy:</strong> Train the “detectives” (queries) to investigate evidence even when the base features aren’t specialized; only later let the feature extractor adapt once the detectives already know where to focus.</p>
+            </div>
+            
+            <!-- Phase 1 -->
+            <div class="component-card">
+                <h4>🔵 Phase 1: Query Alignment (5 epochs)</h4>
+                <p><strong>Goal:</strong> Teach queries to attend to relevant image patches</p>
+                
+                <table>
+                    <tr>
+                        <th>Component</th>
+                        <th>Status</th>
+                    </tr>
+                    <tr>
+                        <td>Vision Encoder (SigLIP)</td>
+                        <td>❄️ Frozen</td>
+                    </tr>
+                    <tr>
+                        <td>Condition Queries</td>
+                        <td>🔥 Training</td>
+                    </tr>
+                    <tr>
+                        <td>Anatomical Queries</td>
+                        <td>🔥 Training</td>
+                    </tr>
+                    <tr>
+                        <td>Cross-Attention</td>
+                        <td>🔥 Training</td>
+                    </tr>
+                    <tr>
+                        <td>Gated Fusion</td>
+                        <td>🔥 Training</td>
+                    </tr>
+                    <tr>
+                        <td>Auxiliary Head</td>
+                        <td>🔥 Training</td>
+                    </tr>
+                    <tr>
+                        <td>Text Decoder (Flan-T5)</td>
+                        <td>❄️ Frozen</td>
+                    </tr>
+                </table>
+                
+                <pre>
+Hyperparameters:
+├── Batch Size: 16 (effective: 32 with grad accum)
+├── Learning Rate: 1e-4
+├── Warmup Steps: 200
+├── Loss Weights: generation=1.0, auxiliary=0.5
+└── Optimizer: AdamW (weight_decay=0.01)</pre>
+            </div>
+            
+            <!-- Phase 2 -->
+            <div class="component-card">
+                <h4>🟢 Phase 2: End-to-End Fine-tuning (15 epochs)</h4>
+                <p><strong>Goal:</strong> Fine-tune entire model with LoRA for optimal performance</p>
+                
+                <table>
+                    <tr>
+                        <th>Component</th>
+                        <th>Status</th>
+                    </tr>
+                    <tr>
+                        <td>Vision Encoder (SigLIP)</td>
+                        <td>🔶 LoRA only (embeddings frozen)</td>
+                    </tr>
+                    <tr>
+                        <td>Condition Queries</td>
+                        <td>🔥 Training</td>
+                    </tr>
+                    <tr>
+                        <td>Anatomical Queries</td>
+                        <td>🔥 Training</td>
+                    </tr>
+                    <tr>
+                        <td>Cross-Attention</td>
+                        <td>🔥 Training</td>
+                    </tr>
+                    <tr>
+                        <td>Gated Fusion</td>
+                        <td>🔥 Training</td>
+                    </tr>
+                    <tr>
+                        <td>Auxiliary Head</td>
+                        <td>🔥 Training</td>
+                    </tr>
+                    <tr>
+                        <td>Text Decoder (Flan-T5)</td>
+                        <td>🔶 LoRA only</td>
+                    </tr>
+                </table>
+                
+                <pre>
+Hyperparameters:
+├── Batch Size: 8 (effective: 32 with grad accum)
+├── Learning Rate: 5e-5
+├── Warmup Steps: 500
+├── Loss Weights: generation=1.0, auxiliary=0.3
+├── Label Smoothing: 0.1
+└── Optimizer: AdamW</pre>
+            </div>
+            
+            <!-- Phase 3 -->
+            <div class="component-card">
+                <h4>🟣 Phase 3: Generation Fine-tuning (Optional, 5 epochs)</h4>
+                <p><strong>Goal:</strong> Polish generation quality without auxiliary supervision</p>
+                
+                <pre>
+Changes from Phase 2:
+├── Auxiliary Loss Weight: 0.0 (disabled)
+├── Vision Encoder: Fully frozen
+├── Learning Rate: 2e-5 (lower)
+└── Focus: Text generation quality only</pre>
+            </div>
+            
+            <h3>Training Infrastructure</h3>
+            <pre>
+PyTorch Lightning Features Used:
+├── Automatic Mixed Precision (bf16)
+├── Gradient Clipping (max_norm=1.0)
+├── Gradient Checkpointing (memory efficient)
+├── ModelCheckpoint (save top-3 by val_loss)
+├── EarlyStopping (patience=5)
+├── LearningRateMonitor
+└── TensorBoard/WandB Logging</pre>
+        </div>
+        
+        <!-- Section 6: Loss Functions -->
+        <div class="section" id="loss">
+            <h2>6. Loss Functions</h2>
+            
+            <h3>6.1 Total Loss</h3>
+            <div class="math">
+                L_total = λ_gen × L_generation + λ_aux × L_auxiliary
+            </div>
+            
+            <h3>6.2 Generation Loss (Cross-Entropy)</h3>
+            <p>
+                Standard language modeling loss - predict next token given previous tokens and visual context.
+            </p>
+            <div class="math">
+                L_generation = -Σ log P(token_t | token_1...t-1, visual_tokens)
+            </div>
+            <pre>
+Computed by T5:
+├── Input: visual tokens (encoder), target text (decoder)
+├── Output: cross-entropy loss over vocabulary
+└── Label smoothing: 0.1 in Phase 2+</pre>
+            
+            <h3>6.3 Auxiliary Loss (Binary Cross-Entropy)</h3>
+            <p>
+                Multi-label classification loss for predicting which of 14 conditions are present.
+            </p>
+            <div class="math">
+                L_auxiliary = -Σ [y_i × log(σ(z_i)) + (1-y_i) × log(1-σ(z_i))]
+            </div>
+            <pre>
+├── Input: condition query embeddings [B, 14, 768]
+├── Output: logits [B, 14]
+├── Targets: binary labels [B, 14]
+└── Loss: BCE with logits (numerically stable)</pre>
+            
+            <h3>6.4 Loss Weight Schedule</h3>
+            <table>
+                <tr>
+                    <th>Phase</th>
+                    <th>λ_gen</th>
+                    <th>λ_aux</th>
+                    <th>Rationale</th>
+                </tr>
+                <tr>
+                    <td>Phase 1</td>
+                    <td>1.0</td>
+                    <td>0.5</td>
+                    <td>Strong auxiliary signal to train queries</td>
+                </tr>
+                <tr>
+                    <td>Phase 2</td>
+                    <td>1.0</td>
+                    <td>0.3</td>
+                    <td>Balance both tasks</td>
+                </tr>
+                <tr>
+                    <td>Phase 3</td>
+                    <td>1.0</td>
+                    <td>0.0</td>
+                    <td>Focus on generation only</td>
+                </tr>
+            </table>
+        </div>
+        
+        <!-- Section 7: Evaluation -->
+        <div class="section" id="evaluation">
+            <h2>7. Evaluation Metrics</h2>
+            
+            <div class="highlight-box">
+                <strong>📁 File:</strong> <code>evaluation/metrics.py</code><br>
+                <strong>🎯 Purpose:</strong> Comprehensive evaluation of generated reports
+            </div>
+            
+            <h3>7.1 Text Similarity Metrics</h3>
+            
+            <div class="component-card">
+                <h4>BLEU (Bilingual Evaluation Understudy)</h4>
+                <p>Measures n-gram overlap between generated and reference text.</p>
+                <pre>
+BLEU-1: Unigram precision (individual words)
+BLEU-2: Bigram precision (word pairs)
+BLEU-3: Trigram precision
+BLEU-4: 4-gram precision (most strict)
+
+Higher = better, range [0, 1]</pre>
+            </div>
+            
+            <div class="component-card">
+                <h4>ROUGE (Recall-Oriented Understudy for Gisting Evaluation)</h4>
+                <p>Measures recall of reference n-grams in generated text.</p>
+                <pre>
+ROUGE-1: Unigram recall
+ROUGE-2: Bigram recall
+ROUGE-L: Longest Common Subsequence
+
+Higher = better, range [0, 1]</pre>
+            </div>
+            
+            <div class="component-card">
+                <h4>METEOR</h4>
+                <p>Considers synonyms and stemming, not just exact matches.</p>
+                <pre>
+- Aligns words between reference and hypothesis
+- Considers: exact match, stem match, synonym match
+- Better correlation with human judgment
+
+Higher = better, range [0, 1]</pre>
+            </div>
+            
+            <h3>7.2 Semantic Similarity Metrics</h3>
+            
+            <div class="component-card">
+                <h4>BERTScore</h4>
+                <p>Uses BERT embeddings to measure semantic similarity.</p>
+                <pre>
+Model: microsoft/deberta-xlarge-mnli
+- Embeds each token with BERT
+- Computes cosine similarity between embeddings
+- Aggregates with greedy matching
+
+Outputs: Precision, Recall, F1
+Higher = better, range [0, 1]</pre>
+            </div>
+            
+            <h3>7.3 Clinical Accuracy Metrics</h3>
+            
+            <div class="component-card">
+                <h4>CheXbert F1</h4>
+                <p>The most important metric for clinical accuracy!</p>
+                <pre>
+Process:
+1. Run CheXbert on generated report → predicted labels [14]
+2. Run CheXbert on reference report → ground truth labels [14]
+3. Compare predictions with ground truth
+
+Outputs:
+- Precision: Of conditions we predicted, how many were correct?
+- Recall: Of actual conditions, how many did we find?
+- F1: Harmonic mean of precision and recall
+
+This measures: "Did we correctly identify the clinical findings?"</pre>
+            </div>
+            
+            <h3>7.4 Text Normalization (Comprehensive)</h3>
+            <p>Before computing metrics, we apply thorough normalization to ensure fair n-gram comparison:</p>
+            <pre>
+Normalization Steps:
+├── Handle empty/None values gracefully
+├── Lowercase all text (case-insensitive)
+├── Remove structural prefixes ("Findings:", "Impression:", "|")
+├── Normalize unicode characters:
+│   ├── Smart quotes → straight quotes (' → ', " → ")
+│   ├── En-dash/em-dash → hyphen (– → -, — → -)
+│   └── Non-breaking space → regular space
+├── Remove punctuation (for fair tokenization)
+│   └── "normal." and "normal" → same token
+├── Normalize whitespace
+├── Tokenize with NLTK word_tokenize
+└── Skip invalid pairs (empty ref or hyp)
+
+Why remove punctuation?
+├── "heart is normal." tokenizes to ["heart", "is", "normal", "."]
+├── "heart is normal"  tokenizes to ["heart", "is", "normal"]
+├── These are semantically identical but n-gram different!
+└── Removing punctuation ensures fair comparison</pre>
+        </div>
+        
+        <!-- Section 8: Inference -->
+        <div class="section" id="inference">
+            <h2>8. Inference Pipeline</h2>
+            
+            <h3>8.1 Generation Process</h3>
+            <pre>
+1. Load trained checkpoint
+2. For each image:
+   a. Preprocess: resize, normalize
+   b. Forward through vision encoder → CLS + patches
+   c. Get queries, run cross-attention
+   d. Gated fusion → 11 visual tokens
+   e. Flan-T5 generate with beam search (prompt-guided)
+
+Generation Parameters:
+├── max_length: 512
+├── min_length: 20
+├── num_beams: 4
+├── length_penalty: 1.0
+├── no_repeat_ngram_size: 3
+└── early_stopping: True</pre>
+            
+            <div class="component-card">
+                <h4>🧭 Decoding Strategy (Deterministic Beam Search)</h4>
+                <p>
+                    We use deterministic beam search with a prompt prefix to ensure structured, clinically consistent
+                    reports. The prompt is prepended to the decoder input, and beam search explores multiple candidate
+                    continuations in parallel, keeping the best-scoring ones.
+                </p>
+                <pre>
+Prompt: "Findings: ... | Impression: ..."   (prepended to decoder start)
+
+Beam search intuition:
+├── num_beams = 4:
+│   - Keep the 4 best partial hypotheses at each decoding step.
+│   - This is like exploring 4 parallel candidate reports and choosing the best continuation each step.
+├── length_penalty = 1.0:
+│   - Neutral; does not favor longer or shorter sequences.
+├── no_repeat_ngram_size = 3:
+│   - Prevents repeating any trigram; reduces copy/repetition artifacts.
+├── early_stopping = True:
+│   - Stop when all beams finish; avoids over-long outputs.
+
+Why deterministic (no sampling)?
+├── Clinical reports benefit from consistency and reduced randomness.
+├── Beam search + prompt yields stable structure ("Findings | Impression").
+                </pre>
+            </div>
+            
+            <h3>8.2 Example Output</h3>
+            <pre>
+Input: chest_xray_001.png
+
+Generated Report:
+"Findings: The heart size is normal. The mediastinal contours 
+are within normal limits. The lungs are clear without focal 
+consolidation, pleural effusion, or pneumothorax. No acute 
+bony abnormality is seen. | Impression: No acute cardiopulmonary 
+abnormality."</pre>
+            
+            <h3>8.3 Attention Visualization</h3>
+            <pre>
+For interpretability, we can visualize which patches each query attended to:
+
+1. Run forward pass with return_attention=True
+2. Get attention weights [20, 576] (20 queries × 576 patches)
+3. Reshape to [20, 24, 24] (spatial layout)
+4. Overlay on original image as heatmap
+
+Example: "Cardiomegaly" query should attend to heart region</pre>
+        </div>
+        
+        <!-- Section 9: Novelty -->
+        <div class="section" id="novelty">
+            <h2>9. Novel Contributions</h2>
+            
+            <div class="grid-2">
+                <div class="component-card">
+                    <h4>🆕 1. CheXbert-Initialized Queries</h4>
+                    <p>
+                        First to initialize visual queries from medical NLP model (BioBERT) embeddings 
+                        of clinical condition names. This bridges vision and medical language from the start.
+                    </p>
+                </div>
+                <div class="component-card">
+                    <h4>🆕 2. Dual Query System</h4>
+                    <p>
+                        Combination of condition queries (what to find) and anatomical queries (where to look). 
+                        This provides both semantic and spatial grounding.
+                    </p>
+                </div>
+                <div class="component-card">
+                    <h4>🆕 3. Adaptive Gated Fusion</h4>
+                    <p>
+                        Learned gate to balance global (CLS) and local (query) information. The model 
+                        adapts its visual representation per image.
+                    </p>
+                </div>
+                <div class="component-card">
+                    <h4>🆕 4. Multi-task Learning</h4>
+                    <p>
+                        Joint optimization of generation and classification. The auxiliary task provides 
+                        direct clinical supervision during training.
+                    </p>
+                </div>
+            </div>
+            
+            <h3>Comparison with Existing Methods</h3>
+            <table>
+                <tr>
+                    <th>Method</th>
+                    <th>Visual Tokens</th>
+                    <th>Query Initialization</th>
+                    <th>Clinical Supervision</th>
+                </tr>
+                <tr>
+                    <td>R2Gen</td>
+                    <td>Single CLS</td>
+                    <td>N/A</td>
+                    <td>No</td>
+                </tr>
+                <tr>
+                    <td>CMN</td>
+                    <td>Memory</td>
+                    <td>Random</td>
+                    <td>No</td>
+                </tr>
+                <tr>
+                    <td>BLIP-2</td>
+                    <td>32 learned</td>
+                    <td>Random</td>
+                    <td>No</td>
+                </tr>
+                <tr>
+                    <td><strong>Ours</strong></td>
+                    <td><strong>11 (1 CLS + 10 pooled)</strong></td>
+                    <td><strong>BioBERT + Xavier</strong></td>
+                    <td><strong>Yes (CheXbert)</strong></td>
+                </tr>
+            </table>
+        </div>
+        
+        <!-- Section 10: Technical Specs -->
+        <div class="section" id="specs">
+            <h2>10. Technical Specifications</h2>
+            
+            <h3>10.1 Model Size</h3>
+            <table>
+                <tr>
+                    <th>Component</th>
+                    <th>Total Parameters</th>
+                    <th>Trainable (with LoRA)</th>
+                </tr>
+                <tr>
+                    <td>SigLIP Vision Encoder</td>
+                    <td>~86M</td>
+                    <td>~300K (LoRA)</td>
+                </tr>
+                <tr>
+                    <td>Condition Queries</td>
+                    <td>10.7K</td>
+                    <td>10.7K</td>
+                </tr>
+                <tr>
+                    <td>Anatomical Queries</td>
+                    <td>4.6K</td>
+                    <td>4.6K</td>
+                </tr>
+                <tr>
+                    <td>Cross-Attention (2 layers)</td>
+                    <td>~12M</td>
+                    <td>~12M</td>
+                </tr>
+                <tr>
+                    <td>Gated Fusion</td>
+                    <td>~2M</td>
+                    <td>~2M</td>
+                </tr>
+                <tr>
+                    <td>Auxiliary Head</td>
+                    <td>~300K</td>
+                    <td>~300K</td>
+                </tr>
+                <tr>
+                    <td>Flan-T5-Base</td>
+                    <td>~248M</td>
+                    <td>~1.5M (LoRA)</td>
+                </tr>
+                <tr>
+                    <td><strong>Total</strong></td>
+                    <td><strong>~350M</strong></td>
+                    <td><strong>~16M (~4.5%)</strong></td>
+                </tr>
+            </table>
+            
+            <h3>10.2 Hardware Requirements</h3>
+            <table>
+                <tr>
+                    <th>Resource</th>
+                    <th>Minimum</th>
+                    <th>Recommended</th>
+                </tr>
+                <tr>
+                    <td>GPU</td>
+                    <td>16GB VRAM</td>
+                    <td>24GB VRAM (A5000)</td>
+                </tr>
+                <tr>
+                    <td>RAM</td>
+                    <td>32GB</td>
+                    <td>64GB</td>
+                </tr>
+                <tr>
+                    <td>Storage</td>
+                    <td>20GB</td>
+                    <td>50GB</td>
+                </tr>
+                <tr>
+                    <td>Training Time</td>
+                    <td>~12 hours (A5000)</td>
+                    <td>~8 hours (A100)</td>
+                </tr>
+            </table>
+            
+            <h3>10.3 File Structure</h3>
+            <pre>
+chexquery-medvlm/
+├── configs/
+│   ├── model_config.yaml      # Architecture settings
+│   ├── train_config.yaml      # Training hyperparameters
+│   ├── data_config.yaml       # Dataset configuration
+│   └── eval_config.yaml       # Evaluation settings
+├── data/
+│   ├── dataset.py             # PyTorch Dataset
+│   ├── datamodule.py          # Lightning DataModule
+│   ├── preprocessing.py       # Text processing
+│   └── augmentations.py       # Image augmentation
+├── models/
+│   ├── vision_encoder.py      # SigLIP wrapper
+│   ├── condition_queries.py   # CheXbert-init queries
+│   ├── anatomical_queries.py  # Region queries
+│   ├── cross_attention.py     # Cross-attention layers
+│   ├── gated_fusion.py        # Gating + pooling
+│   ├── text_decoder.py        # Flan-T5 wrapper
+│   ├── auxiliary_head.py      # Classification head
+│   └── chexquery_medvlm.py    # Full model
+├── training/
+│   ├── lightning_module.py    # PL module
+│   └── trainer.py             # Training loop
+├── evaluation/
+│   ├── metrics.py             # All metrics
+│   └── evaluate.py            # Evaluation script
+├── visualization/
+│   └── attention_viz.py       # Attention heatmaps
+├── scripts/
+│   └── *.slurm                # HPC scripts
+├── main.py                    # CLI entry point
+└── requirements.txt           # Dependencies</pre>
+        </div>
+        
+        <!-- Section 11: Training Guide & Phase 3 Notes -->
+        <div class="section" id="training-guide">
+            <h2>11. Training Guide & Phase 3 Notes</h2>
+            
+            <h3>Step-by-Step Training</h3>
+            <pre>
+python main.py prepare \
+  --splits-file outputs/splits/data_splits.json
+
+python main.py train --phase 1 \
+  --model-config configs/model_config.yaml \
+  --train-config configs/train_config.yaml \
+  --data-config configs/data_config.yaml \
+  --checkpoint-dir outputs/checkpoints
+
+# Use best Phase 1 checkpoint
+PHASE1_CKPT=$(ls -t outputs/checkpoints/phase1/*.ckpt | head -1)
+
+python main.py train --phase 2 \
+  --model-config configs/model_config.yaml \
+  --train-config configs/train_config.yaml \
+  --data-config configs/data_config.yaml \
+  --checkpoint-dir outputs/checkpoints \
+  --resume "$PHASE1_CKPT"
+
+BEST_CKPT=$(ls -t outputs/checkpoints/phase2/*.ckpt | head -1)
+
+python main.py evaluate \
+  --checkpoint "$BEST_CKPT" \
+  --model-config configs/model_config.yaml \
+  --train-config configs/train_config.yaml \
+  --data-config configs/data_config.yaml \
+  --output-dir outputs/evaluation \
+  --batch-size 16 \
+  --num-beams 4 \
+  --split test
+
+python main.py generate \
+  --checkpoint "$BEST_CKPT" \
+  --model-config configs/model_config.yaml \
+  --train-config configs/train_config.yaml \
+  --data-config configs/data_config.yaml \
+  --images path/to/image_or_dir \
+  --max-length 512 \
+  --num-beams 4
+
+
+python main.py visualize \
+  --checkpoint "$BEST_CKPT" \
+  --model-config configs/model_config.yaml \
+  --train-config configs/train_config.yaml \
+  --images path/to/image.png \
+  --output-dir outputs/visualizations</pre>
+            
+            <div class="highlight-box">
+                <strong>Why Phase 3 is Optional</strong><br>
+                <ul style="margin-left: 15px;">
+                    <li>The architecture is fully trained after Phase 1 + Phase 2.</li>
+                    <li>Phase 3 adds no new components; it only polishes generation (fluency/format) with vision frozen and auxiliary loss off.</li>
+                    <li>Skip if Phase 2 metrics are satisfactory or data is small; run if you want a slight fluency boost without touching the vision backbone.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    
+    <footer>
+        <p>📄 CheXQuery-MedVLM Architecture Documentation</p>
+        <p>Generated for research and educational purposes</p>
+    </footer>
+</body>
+</html>
