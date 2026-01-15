@@ -139,6 +139,55 @@ Query-based architecture with:
          └─────────────────────────────┘
 ```
 
+### 3.2 High-Level Diagram (System View)
+
+```
+[Input X-ray] 
+     │
+     ▼
+[SigLIP Vision Encoder + LoRA]
+     │  (CLS + Patch tokens)
+     ├───────────────┐
+     ▼               ▼
+[Condition Queries]  [Anatomical Queries]
+     │               │
+     └──────┬────────┘
+            ▼
+     [Cross-Attention]
+            ▼
+     [Gated Fusion]
+            ▼
+     [Flan-T5 Decoder + LoRA]
+            ▼
+  Findings: ... | Impression: ...
+```
+
+### 3.3 Data Flow Diagram (Pipeline View)
+
+```
+Data (IU-Xray)
+  ├── images/images_normalized/  → image transforms (resize, rotate, affine, jitter)
+  ├── indiana_reports.csv        → text cleaning + structured formatting
+  └── indiana_projections.csv    → projection filter (Frontal)
+
+Splits (patient-level)
+  ├── train/val/test UIDs
+  └── outputs/splits/data_splits.json
+
+Optional CheXbert Labels
+  └── outputs/chexbert_labels.json
+
+Training
+  ├── Phase 1: queries + cross-attn + fusion + aux head
+  ├── Phase 2: LoRA on SigLIP + Flan-T5 + all query modules
+  └── Phase 3: generation polish (optional)
+
+Evaluation
+  ├── generate predictions
+  ├── post-process (prompt strip, impression consistency)
+  └── metrics (BLEU/ROUGE/BERTScore/CheXbert + FN/FP rates)
+```
+
 ### 3.2 Dimension Summary
 
 | Stage | Tensor Shape | Description |
@@ -172,8 +221,8 @@ SigLIP (Sigmoid Loss for Image-text Pre-training) is Google's vision encoder pre
 
 #### LoRA Configuration:
 ```yaml
-rank: 8
-alpha: 16
+rank: 16
+alpha: 32
 dropout: 0.05
 target_modules: ["q_proj", "v_proj"]
 ```
@@ -365,15 +414,19 @@ Findings: ... | Impression: ...
 - **Prompt prefix:** Ensures the decoder starts from the required format (`Findings: ... | Impression: ...`).
 - **Search:** Beam search (deterministic, no sampling)
   - `num_beams = 4`: Keep the top 4 partial hypotheses at each step (explore 4 candidate reports in parallel).
-  - `no_repeat_ngram_size = 3`: Prevent repeating any trigram (reduces repetition artifacts).
-  - `length_penalty = 1.0`: Neutral; doesn’t favor longer or shorter outputs.
+  - `no_repeat_ngram_size = 2`: Prevent repeating any bigram (reduces repetition while preserving clinical phrasing).
+  - `length_penalty = 1.1`: Slight bias toward more complete reports.
   - `early_stopping = True`: Stop when all beams finish; prevents overly long outputs.
   - `min_length = 20`, `max_length = 512`: Bounds for report length.
 
 **Why this strategy?**
 - Clinical reports value consistency over randomness → deterministic beam search is preferred to sampling.
 - Prompt + beam search enforces the structured format and reduces format drift.
-- Trigram blocking helps avoid repetitive phrasing common in medical text generation.
+- Bigram blocking helps avoid repetitive phrasing common in medical text generation.
+
+**Post-processing guardrails (current codebase):**
+- Prompt stripping up to the last `Report:` marker
+- Impression consistency rule to avoid “No acute abnormality” when findings include abnormal cues
 
 #### LoRA Configuration:
 ```yaml
@@ -494,6 +547,33 @@ impression: "No acute cardiopulmonary abnormality."
 
 > **Why remove instead of replace?** If we replaced XXXX with `[REDACTED]`, the model might learn to generate `[REDACTED]` in outputs. By removing entire PHI-containing sentences, we ensure clean training data and clean generation.
 
+### 5.5 CheXbert Labels and Abnormal Sampling
+
+**Why:** IU‑Xray is normal‑heavy, which can cause false negatives. We use CheXbert labels to (1) supervise abnormalities and (2) rebalance batches.
+
+**Where labels are stored:**  
+`outputs/chexbert_labels.json` (one label vector per UID).
+
+**How labels are generated (CLI):**
+```
+python main.py chexbert_labels \
+  --data-config configs/data_config.yaml \
+  --output-path outputs/chexbert_labels.json \
+  --batch-size 32
+```
+
+**Abnormal-aware sampling:**  
+During training, the DataLoader can oversample abnormal cases to target ~50% abnormal per batch (controlled by `sampling` in `data_config.yaml`). This uses CheXbert labels and treats any positive label **except “No Finding”** as abnormal.
+
+### 5.6 Post-processing Guardrails (Generation & Evaluation)
+
+After decoding, we apply **post-processing** to reduce prompt leakage and contradiction:
+
+1. **Prompt stripping:** remove everything up to and including the last `Report:` marker.  
+2. **Impression consistency:** if findings mention abnormal cues, impressions like “No acute abnormality” are replaced with a neutral abnormal summary.
+
+These are controlled in `configs/eval_config.yaml` under `postprocess`.
+
 ---
 
 ## 6. Training Strategy
@@ -517,7 +597,7 @@ Training everything at once is unstable—randomly initialized queries can disru
 > 
 > **Analogy:** Train the “detectives” (queries) to investigate evidence even when the base features aren’t specialized; only later allow the feature extractor to adapt, once the detectives already know how to focus on the right evidence.
 
-#### Phase 1: Query Alignment (5 epochs)
+#### Phase 1: Query Alignment (15 epochs)
 
 **Goal:** Teach queries to attend to relevant patches
 
@@ -538,10 +618,25 @@ learning_rate: 1e-4
 warmup_steps: 200
 loss_weights:
   generation: 1.0
-  auxiliary: 0.5
+  auxiliary: 0.7
 ```
 
-#### Phase 2: End-to-End Fine-tuning (15 epochs)
+**Phase 1 Diagram (Query Alignment):**
+```
+Images → SigLIP (frozen) → CLS + Patch Tokens
+                 │
+     Condition Queries + Anatomical Queries
+                 │
+          Cross-Attention (train)
+                 │
+           Gated Fusion (train)
+                 │
+   ┌─────────────┴─────────────┐
+   │                           │
+Aux Head (train)          Flan-T5 (frozen)
+```
+
+#### Phase 2: End-to-End Fine-tuning (30 epochs)
 
 **Goal:** Fine-tune entire model with LoRA
 
@@ -558,15 +653,30 @@ loss_weights:
 **Hyperparameters:**
 ```yaml
 batch_size: 8 (effective: 32)
-learning_rate: 5e-5
+learning_rate: 3e-5
 warmup_steps: 500
-label_smoothing: 0.1
+label_smoothing: 0.05
 loss_weights:
   generation: 1.0
   auxiliary: 0.3
 ```
 
-#### Phase 3: Generation Fine-tuning (Optional, 5 epochs)
+**Phase 2 Diagram (End-to-End with LoRA):**
+```
+Images → SigLIP (LoRA) → CLS + Patch Tokens
+                 │
+     Condition Queries + Anatomical Queries (train)
+                 │
+          Cross-Attention (train)
+                 │
+           Gated Fusion (train)
+                 │
+   ┌─────────────┴─────────────┐
+   │                           │
+Aux Head (train)          Flan-T5 (LoRA)
+```
+
+#### Phase 3: Generation Fine-tuning (Optional, 15 epochs)
 
 **Goal:** Polish generation quality
 
@@ -574,6 +684,19 @@ loss_weights:
 - Auxiliary weight: 0.0 (disabled)
 - Vision encoder: Fully frozen
 - Learning rate: 2e-5
+
+**Phase 3 Diagram (Generation Polish):**
+```
+Images → SigLIP (frozen) → CLS + Patch Tokens
+                 │
+   Condition/Anatomical Queries (train)
+                 │
+        Cross-Attention (train)
+                 │
+         Gated Fusion (train)
+                 │
+          Flan-T5 (train)
+```
 
 ---
 
@@ -594,25 +717,27 @@ L_generation = -Σ log P(token_t | token_1...t-1, visual_tokens)
 ```
 
 - Computed by T5 forward pass
-- Label smoothing: 0.1 in Phase 2+
+- Label smoothing: 0.05 in Phase 2+
 
 ### 7.3 Auxiliary Loss
 
-Binary cross-entropy for multi-label classification:
+Binary cross-entropy for multi-label classification with label-specific weights:
 
 ```
-L_auxiliary = -Σ [y_i × log(σ(z_i)) + (1-y_i) × log(1-σ(z_i))]
+L_auxiliary = BCEWithLogits(chexbert_logits, chexbert_labels, weight=label_weights)
 ```
 
 - Input: Condition query embeddings [B, 14, 768]
 - Output: Logits [B, 14]
 - Targets: Binary labels from CheXbert
+- Label-specific weights: prioritize cardiomegaly, pneumothorax, pleural effusion; others default to 1.0
+- Masking: if CheXbert labels are missing for a sample, its auxiliary loss is skipped
 
 ### 7.4 Loss Weight Schedule
 
 | Phase | λ_gen | λ_aux | Rationale |
 |-------|-------|-------|-----------|
-| Phase 1 | 1.0 | 0.5 | Strong auxiliary signal |
+| Phase 1 | 1.0 | 0.7 | Strong auxiliary signal |
 | Phase 2 | 1.0 | 0.3 | Balance both tasks |
 | Phase 3 | 1.0 | 0.0 | Focus on generation |
 
@@ -658,6 +783,11 @@ Outputs:
 - Recall: Of actual conditions, how many found?
 - F1: Harmonic mean
 ```
+
+**Additional FN/FP Metrics (current codebase):**
+- Per-label FN rate: `FN / positives` (captures systematic misses)
+- Per-label FP rate: `FP / negatives` (guards against hallucinations)
+- Abnormal recall: any positive label except “No Finding”
 
 ### 8.4 Text Normalization
 
@@ -772,6 +902,12 @@ Joint optimization of generation + classification.
 python main.py prepare \
   --splits-file outputs/splits/data_splits.json
 
+# (Recommended) Precompute CheXbert labels for supervision + sampling
+python main.py chexbert_labels \
+  --data-config configs/data_config.yaml \
+  --output-path outputs/chexbert_labels.json \
+  --batch-size 32
+
 python main.py train --phase 1 \
   --model-config configs/model_config.yaml \
   --train-config configs/train_config.yaml \
@@ -795,6 +931,7 @@ python main.py evaluate \
   --model-config configs/model_config.yaml \
   --train-config configs/train_config.yaml \
   --data-config configs/data_config.yaml \
+  --eval-config configs/eval_config.yaml \
   --output-dir outputs/evaluation \
   --batch-size 16 \
   --num-beams 4 \
@@ -805,6 +942,7 @@ python main.py generate \
   --model-config configs/model_config.yaml \
   --train-config configs/train_config.yaml \
   --data-config configs/data_config.yaml \
+  --eval-config configs/eval_config.yaml \
   --images path/to/image_or_dir \
   --max-length 512 \
   --num-beams 4
@@ -814,6 +952,8 @@ python main.py visualize \
   --checkpoint "$BEST_CKPT" \
   --model-config configs/model_config.yaml \
   --train-config configs/train_config.yaml \
+  --data-config configs/data_config.yaml \
+  --eval-config configs/eval_config.yaml \
   --images path/to/image.png \
   --output-dir outputs/visualizations
 ```

@@ -492,6 +492,31 @@
                 <div class="arrow">↓</div>
                 <div class="flow-box output">📋 Generated Report: "Findings: ... | Impression: ..."</div>
             </div>
+
+            <h3>2.3 Detailed Data Flow (Data → Model → Outputs)</h3>
+            <div class="diagram-container">
+                <pre>
+IU-Xray Dataset
+├── images/images_normalized/        → image transforms (resize, rotate, affine, jitter)
+├── indiana_reports.csv              → text cleaning + structured formatting
+└── indiana_projections.csv          → projection filter (Frontal)
+
+Patient-level Splits
+└── outputs/splits/data_splits.json  → train/val/test UIDs
+
+Optional CheXbert Labels
+└── outputs/chexbert_labels.json     → abnormal-aware sampling + aux supervision
+
+Training
+├── Phase 1: queries + cross-attn + fusion + aux head (vision/decoder frozen)
+├── Phase 2: LoRA on SigLIP + Flan-T5 + all query modules
+└── Phase 3: generation polish (optional)
+
+Evaluation
+├── generate predictions
+├── post-process (prompt strip, impression consistency)
+└── metrics (BLEU/ROUGE/BERTScore/CheXbert + FN/FP rates)</pre>
+            </div>
         </div>
         
         <!-- Section 3: Components -->
@@ -1051,13 +1076,34 @@ Why remove PHI sentences instead of replacing?
 ├── Removing entire sentence preserves clean training signal
 └── Generated reports won't contain placeholder artifacts</pre>
             
-            <h3>4.5 DataLoader Output</h3>
+            <h3>4.5 CheXbert Labels & Abnormal Sampling</h3>
+            <pre>
+CheXbert labels (optional but recommended):
+└── outputs/chexbert_labels.json
+
+Why:
+├── Provides clinical supervision for auxiliary loss
+└── Enables abnormal-aware sampling (reduce false negatives)
+
+Sampling:
+├── Treat any positive label (except "No Finding") as abnormal
+└── Target ~50% abnormal per batch (configurable via data_config.yaml)</pre>
+
+            <h3>4.6 Post-processing Guardrails</h3>
+            <pre>
+After generation:
+├── Strip prompt text up to last "Report:" marker
+└── Impression consistency:
+    If findings contain abnormal cues, do not allow "No acute abnormality"</pre>
+
+            <h3>4.7 DataLoader Output</h3>
             <pre>
 Each batch contains:
 {
     'images': Tensor[B, 3, 384, 384],      # Preprocessed images
     'texts': List[str],                     # Target report strings
     'chexbert_labels': Tensor[B, 14],      # Binary labels (0/1)
+    'chexbert_mask': Tensor[B],            # 1 if labels exist, else 0
     'metadata': List[dict]                  # uid, filename, etc.
 }</pre>
         </div>
@@ -1091,7 +1137,7 @@ Each batch contains:
             
             <!-- Phase 1 -->
             <div class="component-card">
-                <h4>🔵 Phase 1: Query Alignment (5 epochs)</h4>
+                <h4>🔵 Phase 1: Query Alignment (15 epochs)</h4>
                 <p><strong>Goal:</strong> Teach queries to attend to relevant image patches</p>
                 
                 <table>
@@ -1134,13 +1180,26 @@ Hyperparameters:
 ├── Batch Size: 16 (effective: 32 with grad accum)
 ├── Learning Rate: 1e-4
 ├── Warmup Steps: 200
-├── Loss Weights: generation=1.0, auxiliary=0.5
+├── Loss Weights: generation=1.0, auxiliary=0.7
 └── Optimizer: AdamW (weight_decay=0.01)</pre>
+                <pre>
+Phase 1 Diagram:
+Images → SigLIP (frozen) → CLS + Patch Tokens
+                 │
+     Condition Queries + Anatomical Queries
+                 │
+          Cross-Attention (train)
+                 │
+           Gated Fusion (train)
+                 │
+   ┌─────────────┴─────────────┐
+   │                           │
+Aux Head (train)          Flan-T5 (frozen)</pre>
             </div>
             
             <!-- Phase 2 -->
             <div class="component-card">
-                <h4>🟢 Phase 2: End-to-End Fine-tuning (15 epochs)</h4>
+                <h4>🟢 Phase 2: End-to-End Fine-tuning (30 epochs)</h4>
                 <p><strong>Goal:</strong> Fine-tune entire model with LoRA for optimal performance</p>
                 
                 <table>
@@ -1181,16 +1240,29 @@ Hyperparameters:
                 <pre>
 Hyperparameters:
 ├── Batch Size: 8 (effective: 32 with grad accum)
-├── Learning Rate: 5e-5
+├── Learning Rate: 3e-5
 ├── Warmup Steps: 500
 ├── Loss Weights: generation=1.0, auxiliary=0.3
-├── Label Smoothing: 0.1
+├── Label Smoothing: 0.05
 └── Optimizer: AdamW</pre>
+                <pre>
+Phase 2 Diagram:
+Images → SigLIP (LoRA) → CLS + Patch Tokens
+                 │
+     Condition Queries + Anatomical Queries (train)
+                 │
+          Cross-Attention (train)
+                 │
+           Gated Fusion (train)
+                 │
+   ┌─────────────┴─────────────┐
+   │                           │
+Aux Head (train)          Flan-T5 (LoRA)</pre>
             </div>
             
             <!-- Phase 3 -->
             <div class="component-card">
-                <h4>🟣 Phase 3: Generation Fine-tuning (Optional, 5 epochs)</h4>
+                <h4>🟣 Phase 3: Generation Fine-tuning (Optional, 15 epochs)</h4>
                 <p><strong>Goal:</strong> Polish generation quality without auxiliary supervision</p>
                 
                 <pre>
@@ -1199,6 +1271,17 @@ Changes from Phase 2:
 ├── Vision Encoder: Fully frozen
 ├── Learning Rate: 2e-5 (lower)
 └── Focus: Text generation quality only</pre>
+                <pre>
+Phase 3 Diagram:
+Images → SigLIP (frozen) → CLS + Patch Tokens
+                 │
+   Condition/Anatomical Queries (train)
+                 │
+        Cross-Attention (train)
+                 │
+         Gated Fusion (train)
+                 │
+          Flan-T5 (train)</pre>
             </div>
             
             <h3>Training Infrastructure</h3>
@@ -1233,20 +1316,21 @@ PyTorch Lightning Features Used:
 Computed by T5:
 ├── Input: visual tokens (encoder), target text (decoder)
 ├── Output: cross-entropy loss over vocabulary
-└── Label smoothing: 0.1 in Phase 2+</pre>
+└── Label smoothing: 0.05 in Phase 2+</pre>
             
             <h3>6.3 Auxiliary Loss (Binary Cross-Entropy)</h3>
             <p>
                 Multi-label classification loss for predicting which of 14 conditions are present.
             </p>
             <div class="math">
-                L_auxiliary = -Σ [y_i × log(σ(z_i)) + (1-y_i) × log(1-σ(z_i))]
+                L_auxiliary = BCEWithLogits(chexbert_logits, chexbert_labels, weight=label_weights)
             </div>
             <pre>
 ├── Input: condition query embeddings [B, 14, 768]
 ├── Output: logits [B, 14]
 ├── Targets: binary labels [B, 14]
-└── Loss: BCE with logits (numerically stable)</pre>
+├── Label-specific weights: prioritize cardiomegaly, pneumothorax, pleural effusion
+└── Masking: skip auxiliary loss if labels are missing</pre>
             
             <h3>6.4 Loss Weight Schedule</h3>
             <table>
@@ -1259,7 +1343,7 @@ Computed by T5:
                 <tr>
                     <td>Phase 1</td>
                     <td>1.0</td>
-                    <td>0.5</td>
+                    <td>0.7</td>
                     <td>Strong auxiliary signal to train queries</td>
                 </tr>
                 <tr>
@@ -1353,6 +1437,11 @@ Outputs:
 - Recall: Of actual conditions, how many did we find?
 - F1: Harmonic mean of precision and recall
 
+Additional outputs (current codebase):
+- Per-label FN rate: FN / positives
+- Per-label FP rate: FP / negatives
+- Abnormal recall: any positive label except "No Finding"
+
 This measures: "Did we correctly identify the clinical findings?"</pre>
             </div>
             
@@ -1398,8 +1487,8 @@ Generation Parameters:
 ├── max_length: 512
 ├── min_length: 20
 ├── num_beams: 4
-├── length_penalty: 1.0
-├── no_repeat_ngram_size: 3
+├── length_penalty: 1.1
+├── no_repeat_ngram_size: 2
 └── early_stopping: True</pre>
             
             <div class="component-card">
@@ -1416,10 +1505,10 @@ Beam search intuition:
 ├── num_beams = 4:
 │   - Keep the 4 best partial hypotheses at each decoding step.
 │   - This is like exploring 4 parallel candidate reports and choosing the best continuation each step.
-├── length_penalty = 1.0:
-│   - Neutral; does not favor longer or shorter sequences.
-├── no_repeat_ngram_size = 3:
-│   - Prevents repeating any trigram; reduces copy/repetition artifacts.
+├── length_penalty = 1.1:
+│   - Slight bias toward more complete reports.
+├── no_repeat_ngram_size = 2:
+│   - Prevents repeating any bigram; reduces repetition while preserving clinical phrasing.
 ├── early_stopping = True:
 │   - Stop when all beams finish; avoids over-long outputs.
 
@@ -1427,6 +1516,11 @@ Why deterministic (no sampling)?
 ├── Clinical reports benefit from consistency and reduced randomness.
 ├── Beam search + prompt yields stable structure ("Findings | Impression").
                 </pre>
+                <p>
+                    <strong>Post-processing guardrails:</strong> After decoding, we strip any residual prompt text
+                    (up to the last <code>Report:</code> marker) and apply an impression-consistency rule that prevents
+                    “No acute abnormality” when findings contain abnormal cues.
+                </p>
             </div>
             
             <h3>8.2 Example Output</h3>
@@ -1649,6 +1743,12 @@ chexquery-medvlm/
 python main.py prepare \
   --splits-file outputs/splits/data_splits.json
 
+# (Recommended) Precompute CheXbert labels for supervision + sampling
+python main.py chexbert_labels \
+  --data-config configs/data_config.yaml \
+  --output-path outputs/chexbert_labels.json \
+  --batch-size 32
+
 python main.py train --phase 1 \
   --model-config configs/model_config.yaml \
   --train-config configs/train_config.yaml \
@@ -1672,6 +1772,7 @@ python main.py evaluate \
   --model-config configs/model_config.yaml \
   --train-config configs/train_config.yaml \
   --data-config configs/data_config.yaml \
+  --eval-config configs/eval_config.yaml \
   --output-dir outputs/evaluation \
   --batch-size 16 \
   --num-beams 4 \
@@ -1682,6 +1783,7 @@ python main.py generate \
   --model-config configs/model_config.yaml \
   --train-config configs/train_config.yaml \
   --data-config configs/data_config.yaml \
+  --eval-config configs/eval_config.yaml \
   --images path/to/image_or_dir \
   --max-length 512 \
   --num-beams 4
@@ -1691,6 +1793,8 @@ python main.py visualize \
   --checkpoint "$BEST_CKPT" \
   --model-config configs/model_config.yaml \
   --train-config configs/train_config.yaml \
+  --data-config configs/data_config.yaml \
+  --eval-config configs/eval_config.yaml \
   --images path/to/image.png \
   --output-dir outputs/visualizations</pre>
             
