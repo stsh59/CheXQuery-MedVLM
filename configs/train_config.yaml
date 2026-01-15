@@ -11,7 +11,7 @@ log_dir: "outputs/logs"
 # Phase 1: Query Alignment
 phase1:
   name: "query_alignment"
-  epochs: 5
+  epochs: 15
   batch_size: 16
   gradient_accumulation_steps: 2
   effective_batch_size: 32
@@ -46,13 +46,13 @@ phase1:
   # Loss weights
   loss:
     generation_weight: 1.0
-    auxiliary_weight: 0.5
+    auxiliary_weight: 0.7
     label_smoothing: 0.0
 
 # Phase 2: End-to-End Fine-tuning
 phase2:
   name: "end_to_end"
-  epochs: 15
+  epochs: 30
   batch_size: 8
   gradient_accumulation_steps: 4
   effective_batch_size: 32
@@ -78,7 +78,7 @@ phase2:
   # Optimizer
   optimizer:
     type: "adamw"
-    lr: 5.0e-5
+    lr: 3.0e-5
     weight_decay: 0.01
     betas: [0.9, 0.999]
     eps: 1.0e-8
@@ -93,13 +93,13 @@ phase2:
   loss:
     generation_weight: 1.0
     auxiliary_weight: 0.3
-    label_smoothing: 0.1
+    label_smoothing: 0.05
 
 # Phase 3: Generation Fine-tuning (Optional)
 phase3:
   name: "generation_finetuning"
   enabled: false
-  epochs: 5
+  epochs: 15
   batch_size: 8
   gradient_accumulation_steps: 4
   effective_batch_size: 32
@@ -139,13 +139,20 @@ training:
   precision: "bf16-mixed"
   gradient_clip_val: 1.0
   gradient_checkpointing: true
-  num_workers: 4
+  num_workers: 2
   pin_memory: true
+  auxiliary_label_weights:
+    Cardiomegaly: 2.0
+    Pneumothorax: 2.5
+    Pleural Effusion: 2.5
+    Edema: 1.8
+    Consolidation: 1.8
+    Pneumonia: 1.8
   
   # Checkpointing
   save_every_n_epochs: 1
   save_top_k: 3
-  monitor_metric: "val_loss"
+  monitor_metric: "val/loss"
   monitor_mode: "min"
   
   # Early stopping

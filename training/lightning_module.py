@@ -69,6 +69,9 @@ class CheXQueryLightningModule(pl.LightningModule):
             dropout=model_config.get("cross_attention", {}).get("dropout", 0.1),
         )
         
+        # Label-specific auxiliary weights
+        self.auxiliary_label_weights = self._build_auxiliary_label_weights()
+        
         # Loss weights
         loss_config = self.phase_config.get("loss", {})
         self.generation_weight = loss_config.get("generation_weight", 1.0)
@@ -101,6 +104,27 @@ class CheXQueryLightningModule(pl.LightningModule):
                 return None
         
         return module
+
+    def _normalize_label_key(self, name: str) -> str:
+        return "".join(ch.lower() for ch in name if ch.isalnum())
+
+    def _build_auxiliary_label_weights(self) -> Optional[torch.Tensor]:
+        weights_config = (
+            self.training_config.get("training", {}).get("auxiliary_label_weights")
+            or {}
+        )
+        if not weights_config:
+            return None
+        # Normalize keys for case/spacing differences
+        normalized = {
+            self._normalize_label_key(k): float(v) for k, v in weights_config.items()
+        }
+        label_names = self.model.get_condition_names()
+        weights = []
+        for name in label_names:
+            key = self._normalize_label_key(name)
+            weights.append(normalized.get(key, 1.0))
+        return torch.tensor(weights, dtype=torch.float32)
     
     def forward(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         """Forward pass."""
@@ -109,6 +133,9 @@ class CheXQueryLightningModule(pl.LightningModule):
             texts=batch["texts"],
             chexbert_labels=batch.get("chexbert_labels"),
             chexbert_mask=batch.get("chexbert_mask"),
+            auxiliary_label_weights=self.auxiliary_label_weights.to(self.device)
+            if self.auxiliary_label_weights is not None
+            else None,
         )
         return outputs
     
@@ -163,6 +190,32 @@ class CheXQueryLightningModule(pl.LightningModule):
         
         if outputs["auxiliary_loss"] is not None:
             self.log("val/aux_loss", outputs["auxiliary_loss"], sync_dist=True)
+        
+        # Auxiliary label precision/recall (per label)
+        if outputs.get("auxiliary_logits") is not None and batch.get("chexbert_labels") is not None:
+            logits = outputs["auxiliary_logits"]
+            targets = batch["chexbert_labels"].to(logits.device)
+            mask = batch.get("chexbert_mask")
+            if mask is not None:
+                mask = mask.to(logits.device).float()
+            preds = (torch.sigmoid(logits) >= 0.5).float()
+            label_names = self.model.get_condition_names()
+            for idx, name in enumerate(label_names):
+                if mask is not None:
+                    valid = mask > 0
+                    pred_col = preds[:, idx][valid]
+                    tgt_col = targets[:, idx][valid]
+                else:
+                    pred_col = preds[:, idx]
+                    tgt_col = targets[:, idx]
+                tp = ((pred_col == 1) & (tgt_col == 1)).sum().float()
+                fp = ((pred_col == 1) & (tgt_col == 0)).sum().float()
+                fn = ((pred_col == 0) & (tgt_col == 1)).sum().float()
+                precision = tp / (tp + fp + 1e-8)
+                recall = tp / (tp + fn + 1e-8)
+                key = "".join(ch.lower() for ch in name if ch.isalnum())
+                self.log(f"val/aux_precision_{key}", precision, sync_dist=True)
+                self.log(f"val/aux_recall_{key}", recall, sync_dist=True)
         
         return {"val_loss": total_loss}
     

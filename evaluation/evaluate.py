@@ -11,6 +11,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from data.datamodule import ChestXrayDataModule
+from data.preprocessing import postprocess_generated_report
 from training.lightning_module import CheXQueryLightningModule
 from evaluation.metrics import MedicalReportMetrics
 
@@ -53,6 +54,7 @@ def evaluate_model(
     
     generation_config = (eval_config or {}).get("generation", {})
     normalization_config = (eval_config or {}).get("normalization", {})
+    postprocess_config = (eval_config or {}).get("postprocess", {})
     
     # Load model
     logger.info(f"Loading model from {checkpoint_path}")
@@ -83,6 +85,7 @@ def evaluate_model(
         image_std=data_config.get("image", {}).get("std"),
         use_siglip_processor=data_config.get("image", {}).get("use_siglip_processor", False),
         processor_model=data_config.get("image", {}).get("processor_model"),
+        sampling_config=data_config.get("sampling", {}),
     )
     datamodule.setup()
     
@@ -119,14 +122,28 @@ def evaluate_model(
                 top_p=generation_config.get("top_p", 1.0),
                 top_k=generation_config.get("top_k", 50),
             )
-            
-            all_predictions.extend(predictions)
+            # Post-process predictions (prompt strip, impression consistency)
+            prompt_template = data_config.get("text", {}).get("prompt_template", "")
+            processed = [
+                postprocess_generated_report(
+                    p,
+                    prompt_template=prompt_template,
+                    apply_prompt_strip=postprocess_config.get("strip_prompt", True),
+                    apply_impression_consistency=postprocess_config.get("impression_consistency", False),
+                )
+                for p in predictions
+            ]
+            all_predictions.extend(processed)
             all_references.extend(texts)
             all_metadata.extend(metadata)
     
     # Compute metrics
     logger.info("Computing metrics...")
-    metrics_calculator = MedicalReportMetrics(normalization_config=normalization_config)
+    label_names = data_config.get("chexbert", {}).get("labels")
+    metrics_calculator = MedicalReportMetrics(
+        normalization_config=normalization_config,
+        label_names=label_names,
+    )
     metrics = metrics_calculator.compute_all_metrics(
         references=all_references,
         hypotheses=all_predictions,

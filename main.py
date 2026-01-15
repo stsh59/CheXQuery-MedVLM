@@ -44,6 +44,7 @@ def prepare_data(args):
         augmentation_config=data_config.get("augmentation", {}),
         use_siglip_processor=data_config.get("image", {}).get("use_siglip_processor", False),
         processor_model=data_config.get("image", {}).get("processor_model"),
+        sampling_config=data_config.get("sampling", {}),
     )
     
     # This will download data and create splits
@@ -109,6 +110,7 @@ def generate(args):
     from PIL import Image
     
     from data.augmentations import get_inference_transforms
+    from data.preprocessing import postprocess_generated_report
     from training.lightning_module import CheXQueryLightningModule
     
     # Load configs
@@ -117,6 +119,7 @@ def generate(args):
     data_config = load_config(args.data_config)
     eval_config = load_config(args.eval_config)
     generation_config = eval_config.get("generation", {})
+    postprocess_config = eval_config.get("postprocess", {})
     
     # Load model
     logger.info(f"Loading model from {args.checkpoint}")
@@ -168,6 +171,12 @@ def generate(args):
                 top_p=generation_config.get("top_p", 1.0),
                 top_k=generation_config.get("top_k", 50),
             )[0]
+        report = postprocess_generated_report(
+            report,
+            prompt_template=data_config.get("text", {}).get("prompt_template", ""),
+            apply_prompt_strip=postprocess_config.get("strip_prompt", True),
+            apply_impression_consistency=postprocess_config.get("impression_consistency", False),
+        )
         
         print(f"\n{'='*60}")
         print(f"Image: {image_path}")
@@ -251,6 +260,18 @@ def visualize(args):
         )
         
         logger.info(f"Generated report: {generated[0]}")
+
+
+def compute_chexbert_labels(args):
+    """Compute and save CheXbert labels for all reports."""
+    logger.info("Computing CheXbert labels...")
+    from data.chexbert_labels import compute_chexbert_labels_from_config
+    data_config = load_config(args.data_config)
+    compute_chexbert_labels_from_config(
+        data_config=data_config,
+        output_path=args.output_path,
+        batch_size=args.batch_size,
+    )
 
 
 def main():
@@ -435,6 +456,24 @@ def main():
         default=4,
         help="Number of beams"
     )
+
+    # CheXbert labels
+    chex_parser = subparsers.add_parser(
+        "chexbert_labels",
+        parents=[common_parser],
+        help="Compute CheXbert labels for all reports"
+    )
+    chex_parser.add_argument(
+        "--output-path",
+        default="outputs/chexbert_labels.json",
+        help="Path to save CheXbert labels"
+    )
+    chex_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Batch size for CheXbert labeling"
+    )
     
     # Parse arguments
     args = parser.parse_args()
@@ -458,6 +497,8 @@ def main():
         generate(args)
     elif args.command == "visualize":
         visualize(args)
+    elif args.command == "chexbert_labels":
+        compute_chexbert_labels(args)
     else:
         parser.print_help()
 

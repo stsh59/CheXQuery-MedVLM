@@ -93,6 +93,9 @@ class AuxiliaryClassificationHead(nn.Module):
                 return None
             logits = logits[mask]
             targets = targets[mask]
+            if class_weights is not None and class_weights.dim() == 1:
+                class_weights = class_weights.unsqueeze(0).expand_as(targets)
+                class_weights = class_weights[mask]
         
         if class_weights is not None:
             loss = F.binary_cross_entropy_with_logits(

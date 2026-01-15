@@ -10,7 +10,7 @@ import kagglehub
 from transformers import AutoProcessor
 import pytorch_lightning as pl
 from sklearn.model_selection import train_test_split
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 import pandas as pd
 
 from data.dataset import ChestXrayDataset, collate_fn
@@ -51,6 +51,7 @@ class ChestXrayDataModule(pl.LightningDataModule):
         augmentation_config: Optional[Dict[str, float]] = None,
         use_siglip_processor: bool = False,
         processor_model: Optional[str] = None,
+        sampling_config: Optional[Dict[str, float]] = None,
     ):
         super().__init__()
         self.batch_size = batch_size
@@ -67,6 +68,7 @@ class ChestXrayDataModule(pl.LightningDataModule):
         self.image_mean = image_mean
         self.image_std = image_std
         self.augmentation_config = augmentation_config or {}
+        self.sampling_config = sampling_config or {}
         
         # Optionally align preprocessing with SigLIP processor
         if use_siglip_processor and processor_model:
@@ -210,10 +212,17 @@ class ChestXrayDataModule(pl.LightningDataModule):
     
     def train_dataloader(self) -> DataLoader:
         """Get training dataloader."""
+        sampler = None
+        if self.sampling_config.get("enable", False):
+            target_ratio = float(self.sampling_config.get("abnormal_ratio", 0.5))
+            weights = self.train_dataset.get_sampling_weights(target_ratio)
+            if weights is not None:
+                sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
-            shuffle=True,
+            shuffle=sampler is None,
+            sampler=sampler,
             num_workers=self.num_workers,
             collate_fn=collate_fn,
             pin_memory=True,

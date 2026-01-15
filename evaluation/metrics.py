@@ -3,7 +3,7 @@ Comprehensive evaluation metrics for medical report generation.
 """
 import re
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 import numpy as np
 import nltk
@@ -32,7 +32,11 @@ class MedicalReportMetrics:
     - CheXbert F1
     """
     
-    def __init__(self, normalization_config: Optional[Dict[str, bool]] = None):
+    def __init__(
+        self,
+        normalization_config: Optional[Dict[str, bool]] = None,
+        label_names: Optional[List[str]] = None,
+    ):
         self.rouge_scorer = rouge_scorer.RougeScorer(
             ['rouge1', 'rouge2', 'rougeL'],
             use_stemmer=True
@@ -40,7 +44,107 @@ class MedicalReportMetrics:
         self.smoothing = SmoothingFunction().method1
         self._chexbert_scorer: Optional[object] = None
         self._meteor_scorer: Optional[object] = None
+        self._chexbert_labeler: Optional[object] = None
         self.normalization_config = normalization_config or {}
+        self.label_names = label_names or [
+            "No Finding",
+            "Enlarged Cardiomediastinum",
+            "Cardiomegaly",
+            "Lung Opacity",
+            "Lung Lesion",
+            "Edema",
+            "Consolidation",
+            "Pneumonia",
+            "Atelectasis",
+            "Pneumothorax",
+            "Pleural Effusion",
+            "Pleural Other",
+            "Fracture",
+            "Support Devices",
+        ]
+
+    def _normalize_label_name(self, name: str) -> str:
+        return re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
+
+    def _try_get_chexbert_labeler(self) -> Optional[object]:
+        if self._chexbert_labeler is not None:
+            return self._chexbert_labeler
+        try:
+            from f1chexbert import F1CheXbert
+            scorer = F1CheXbert()
+            # Try common access patterns for a labeler
+            for attr in ["labeler", "chexbert", "model"]:
+                obj = getattr(scorer, attr, None)
+                if obj is not None and hasattr(obj, "label"):
+                    self._chexbert_labeler = obj
+                    return self._chexbert_labeler
+            if hasattr(scorer, "label"):
+                self._chexbert_labeler = scorer
+                return self._chexbert_labeler
+        except Exception as e:
+            logger.warning(f"CheXbert labeler unavailable: {e}")
+        return None
+
+    def _label_with_chexbert(self, texts: List[str]) -> Optional[np.ndarray]:
+        labeler = self._try_get_chexbert_labeler()
+        if labeler is None:
+            return None
+        try:
+            labels = labeler.label(texts)
+            return np.array(labels)
+        except Exception:
+            pass
+        try:
+            labels = labeler(texts)
+            return np.array(labels)
+        except Exception as e:
+            logger.warning(f"CheXbert label extraction failed: {e}")
+        return None
+
+    def _compute_confusion(self, ref_labels: np.ndarray, hyp_labels: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        tp = (hyp_labels == 1) & (ref_labels == 1)
+        fp = (hyp_labels == 1) & (ref_labels == 0)
+        fn = (hyp_labels == 0) & (ref_labels == 1)
+        tn = (hyp_labels == 0) & (ref_labels == 0)
+        return tp.sum(axis=0), fp.sum(axis=0), fn.sum(axis=0), tn.sum(axis=0)
+
+    def compute_chexbert_label_metrics(
+        self,
+        references: List[str],
+        hypotheses: List[str],
+    ) -> Dict[str, float]:
+        """
+        Compute CheXbert label-level metrics: recall, FN rate, FP rate.
+        """
+        ref_labels = self._label_with_chexbert(references)
+        hyp_labels = self._label_with_chexbert(hypotheses)
+        if ref_labels is None or hyp_labels is None:
+            logger.warning("CheXbert label metrics skipped (labeler unavailable)")
+            return {}
+        tp, fp, fn, tn = self._compute_confusion(ref_labels, hyp_labels)
+        metrics: Dict[str, float] = {}
+        for idx, name in enumerate(self.label_names):
+            positives = tp[idx] + fn[idx]
+            negatives = fp[idx] + tn[idx]
+            recall = tp[idx] / positives if positives > 0 else 0.0
+            fn_rate = fn[idx] / positives if positives > 0 else 0.0
+            fp_rate = fp[idx] / negatives if negatives > 0 else 0.0
+            key = self._normalize_label_name(name)
+            metrics[f"chexbert_recall_{key}"] = recall
+            metrics[f"chexbert_fn_rate_{key}"] = fn_rate
+            metrics[f"chexbert_fp_rate_{key}"] = fp_rate
+        metrics["chexbert_recall_macro"] = float(np.mean([metrics[f\"chexbert_recall_{self._normalize_label_name(n)}\"] for n in self.label_names]))
+        metrics["chexbert_fn_rate_macro"] = float(np.mean([metrics[f\"chexbert_fn_rate_{self._normalize_label_name(n)}\"] for n in self.label_names]))
+        metrics["chexbert_fp_rate_macro"] = float(np.mean([metrics[f\"chexbert_fp_rate_{self._normalize_label_name(n)}\"] for n in self.label_names]))
+        # Abnormal vs normal recall
+        ref_abnormal = (ref_labels[:, 1:] == 1).any(axis=1)
+        hyp_abnormal = (hyp_labels[:, 1:] == 1).any(axis=1)
+        abnormal_tp = np.logical_and(ref_abnormal, hyp_abnormal).sum()
+        abnormal_fn = np.logical_and(ref_abnormal, ~hyp_abnormal).sum()
+        abnormal_recall = abnormal_tp / (abnormal_tp + abnormal_fn) if (abnormal_tp + abnormal_fn) > 0 else 0.0
+        metrics["abnormal_recall"] = float(abnormal_recall)
+        metrics["abnormal_fn_rate"] = float(1.0 - abnormal_recall) if abnormal_recall > 0 else float(1.0 if (abnormal_tp + abnormal_fn) > 0 else 0.0)
+        return metrics
     
     def _normalize_text(self, text: str, remove_punctuation: Optional[bool] = None) -> str:
         """
@@ -392,5 +496,9 @@ class MedicalReportMetrics:
         # CheXbert
         chexbert_scores = self.compute_chexbert(references, hypotheses)
         all_metrics.update(chexbert_scores)
+
+        # CheXbert label metrics (FN/FP rates)
+        label_metrics = self.compute_chexbert_label_metrics(references, hypotheses)
+        all_metrics.update(label_metrics)
         
         return all_metrics

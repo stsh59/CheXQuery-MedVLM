@@ -77,6 +77,7 @@ def train_model(
         augmentation_config=data_config.get("augmentation", {}),
         use_siglip_processor=data_config.get("image", {}).get("use_siglip_processor", False),
         processor_model=data_config.get("image", {}).get("processor_model"),
+        sampling_config=data_config.get("sampling", {}),
     )
     
     # Model

@@ -195,6 +195,75 @@ class TextPreprocessor:
         return result
 
 
+def strip_prompt(text: str, prompt_template: str) -> str:
+    """Strip prompt/template text from generated output."""
+    if not text:
+        return text
+    cleaned = text.strip()
+    # Cut everything up to the last "Report:" marker if present
+    report_match = re.search(r'report\s*:\s*', cleaned, flags=re.IGNORECASE)
+    if report_match:
+        cleaned = cleaned[report_match.end():].strip()
+    # Fallback: remove the prompt prefix if present
+    prompt = (prompt_template or "").strip()
+    if prompt and cleaned.lower().startswith(prompt.lower()):
+        cleaned = cleaned[len(prompt):].strip()
+    return cleaned
+
+
+def enforce_impression_consistency(structured_text: str) -> str:
+    """
+    If findings contain abnormal cues, prevent 'No acute abnormality' impressions.
+    This is a lightweight post-hoc guardrail.
+    """
+    if not structured_text:
+        return structured_text
+    preprocessor = TextPreprocessor()
+    sections = preprocessor.extract_sections(structured_text)
+    findings = sections.get("findings", "")
+    impression = sections.get("impression", "")
+    if not impression:
+        return structured_text
+    # Abnormal cue list (from CheXbert labels)
+    abnormal_terms = [
+        "cardiomegaly", "pneumothorax", "pleural effusion", "effusion",
+        "consolidation", "pneumonia", "edema", "atelectasis", "fracture",
+        "lung opacity", "lung lesion", "support device", "pleural", "opacity",
+    ]
+    impression_negatives = [
+        "no acute abnormality",
+        "no acute cardiopulmonary abnormality",
+        "no acute cardiopulmonary findings",
+        "no acute disease",
+    ]
+    findings_lower = findings.lower()
+    impression_lower = impression.lower()
+    if any(term in findings_lower for term in abnormal_terms) and any(
+        phrase in impression_lower for phrase in impression_negatives
+    ):
+        new_impression = "Abnormal findings noted. See findings for details."
+        return preprocessor.output_template.format(
+            findings=findings.strip(),
+            impression=new_impression,
+        )
+    return structured_text
+
+
+def postprocess_generated_report(
+    text: str,
+    prompt_template: str,
+    apply_prompt_strip: bool = True,
+    apply_impression_consistency: bool = False,
+) -> str:
+    """Apply post-processing steps to generated reports."""
+    output = text or ""
+    if apply_prompt_strip:
+        output = strip_prompt(output, prompt_template)
+    if apply_impression_consistency:
+        output = enforce_impression_consistency(output)
+    return output
+
+
 def get_prompt_template() -> str:
     """Get the generation prompt template."""
     return """Generate a structured radiology report for this chest X-ray image.

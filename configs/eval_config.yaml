@@ -7,13 +7,18 @@ generation:
   max_length: 512
   min_length: 20
   num_beams: 4
-  length_penalty: 1.0
-  no_repeat_ngram_size: 3
+  length_penalty: 1.1
+  no_repeat_ngram_size: 2
   early_stopping: true
   do_sample: false
   temperature: 1.0
-  top_p: 1.0
+  top_p: 0.9
   top_k: 50
+
+# Post-processing guardrails
+postprocess:
+  strip_prompt: true
+  impression_consistency: true
 
 # Text normalization for metrics
 normalization:

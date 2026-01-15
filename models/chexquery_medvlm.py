@@ -11,6 +11,7 @@ This is the main model class that integrates all components:
 - Auxiliary Classification Head
 """
 import logging
+import re
 from typing import Dict, List, Optional, Tuple, Any
 
 import torch
@@ -151,16 +152,19 @@ class CheXQueryMedVLM(nn.Module):
         self._log_total_parameters()
     
     def _strip_prompt_prefix(self, text: str) -> str:
-        """Remove prompt template from generated text if present."""
+        """Remove prompt/template text from generated output if present."""
         if not text:
             return text
+        cleaned = text.strip()
+        # Prefer cutting at the last 'Report:' marker if present
+        match = re.search(r'report\s*:\s*', cleaned, flags=re.IGNORECASE)
+        if match:
+            cleaned = cleaned[match.end():].strip()
+        # Fallback: remove exact prompt prefix if it still exists
         prompt = (self.prompt_template or "").strip()
-        if not prompt:
-            return text.strip()
-        if text.lstrip().startswith(prompt):
-            stripped = text.lstrip()[len(prompt):]
-            return stripped.lstrip()
-        return text.strip()
+        if prompt and cleaned.lower().startswith(prompt.lower()):
+            cleaned = cleaned[len(prompt):].strip()
+        return cleaned
     
     def _log_total_parameters(self):
         """Log total model parameters."""
@@ -229,6 +233,7 @@ class CheXQueryMedVLM(nn.Module):
         decoder_attention_mask: Optional[torch.Tensor] = None,
         chexbert_labels: Optional[torch.Tensor] = None,
         chexbert_mask: Optional[torch.Tensor] = None,
+        auxiliary_label_weights: Optional[torch.Tensor] = None,
         return_attention: bool = False,
     ) -> Dict[str, Any]:
         """
@@ -277,7 +282,10 @@ class CheXQueryMedVLM(nn.Module):
         if chexbert_labels is not None:
             auxiliary_logits = self.auxiliary_head(condition_embeds)
             auxiliary_loss = self.auxiliary_head.compute_loss(
-                auxiliary_logits, chexbert_labels, mask=chexbert_mask
+                auxiliary_logits,
+                chexbert_labels,
+                class_weights=auxiliary_label_weights,
+                mask=chexbert_mask,
             )
         
         return {

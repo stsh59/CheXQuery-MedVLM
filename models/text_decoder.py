@@ -10,7 +10,7 @@ from typing import Optional, List, Dict, Any
 import torch
 import torch.nn as nn
 from transformers import T5ForConditionalGeneration, T5Tokenizer
-from transformers.modeling_outputs import Seq2SeqLMOutput
+from transformers.modeling_outputs import Seq2SeqLMOutput, BaseModelOutput
 from peft import LoraConfig, get_peft_model
 
 logger = logging.getLogger(__name__)
@@ -123,7 +123,7 @@ class TextDecoder(nn.Module):
         
         # Create encoder outputs structure
         # T5 expects encoder_outputs as tuple: (hidden_states, )
-        encoder_outputs = (visual_tokens,)
+        encoder_outputs = BaseModelOutput(last_hidden_state=visual_tokens)
         
         # Create attention mask for visual tokens if not provided
         if attention_mask is None:
@@ -180,7 +180,7 @@ class TextDecoder(nn.Module):
         visual_tokens = self.visual_projection(visual_tokens)
         
         # Create encoder outputs
-        encoder_outputs = (visual_tokens,)
+        encoder_outputs = BaseModelOutput(last_hidden_state=visual_tokens)
         
         # Create attention mask
         attention_mask = torch.ones(

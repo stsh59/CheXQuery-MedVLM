@@ -81,3 +81,8 @@ filtering:
   projection_type: "Frontal"  # "Frontal", "Lateral", or null for all
   min_report_length: 10  # Minimum characters in report
   require_impression: true  # Require non-empty impression
+
+# Sampling
+sampling:
+  enable: true
+  abnormal_ratio: 0.5

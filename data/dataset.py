@@ -147,6 +147,32 @@ class ChestXrayDataset(Dataset):
     
     def __len__(self) -> int:
         return len(self.samples)
+
+    def get_sampling_weights(self, target_abnormal_ratio: float = 0.5) -> Optional[List[float]]:
+        """
+        Compute sampling weights to oversample abnormal cases.
+        """
+        if not self.samples:
+            return None
+        abnormal_flags = []
+        for sample in self.samples:
+            uid_key = str(sample["uid"])
+            labels = self.chexbert_labels.get(uid_key)
+            if labels is None:
+                abnormal_flags.append(False)
+                continue
+            # Treat any positive label except "No Finding" as abnormal
+            abnormal_flags.append(any(labels[1:]))
+        total = len(abnormal_flags)
+        abnormal_count = sum(abnormal_flags)
+        if abnormal_count == 0 or abnormal_count == total:
+            return None
+        abnormal_ratio = abnormal_count / total
+        target = min(max(target_abnormal_ratio, 0.01), 0.99)
+        abnormal_weight = target / abnormal_ratio
+        normal_weight = (1 - target) / (1 - abnormal_ratio)
+        weights = [abnormal_weight if flag else normal_weight for flag in abnormal_flags]
+        return weights
     
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """
