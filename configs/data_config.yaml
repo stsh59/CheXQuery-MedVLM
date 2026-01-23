@@ -79,6 +79,8 @@ chexbert:
 # Filtering
 filtering:
   projection_type: "Frontal"  # "Frontal", "Lateral", or null for all
+  projection_types: ["Frontal", "Lateral"]
+  require_both_views: true
   min_report_length: 10  # Minimum characters in report
   require_impression: true  # Require non-empty impression
 

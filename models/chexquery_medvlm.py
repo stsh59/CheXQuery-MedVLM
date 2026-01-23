@@ -67,6 +67,8 @@ class CheXQueryMedVLM(nn.Module):
         ffn_dim: int = 3072,
         # Gated fusion
         num_pool_queries: int = 10,
+        # Multi-view
+        multi_view_enabled: bool = False,
         # Text decoder
         decoder_model_name: str = "google/flan-t5-base",
         decoder_use_lora: bool = True,
@@ -83,6 +85,7 @@ class CheXQueryMedVLM(nn.Module):
         self.num_condition_queries = num_condition_queries
         self.num_anatomical_queries = num_anatomical_queries
         self.num_total_queries = num_condition_queries + num_anatomical_queries
+        self.multi_view_enabled = multi_view_enabled
         # Prompt to guide the decoder output format
         self.prompt_template = prompt_template or get_prompt_template()
         
@@ -93,6 +96,10 @@ class CheXQueryMedVLM(nn.Module):
             use_lora=vision_use_lora,
             lora_rank=vision_lora_rank,
         )
+
+        if self.multi_view_enabled:
+            self.view_embedding = nn.Embedding(2, hidden_dim)
+            self.view_fusion = nn.Linear(hidden_dim * 2, hidden_dim)
         
         # ============ Query Modules ============
         self.condition_queries = ConditionQueryModule(
@@ -176,6 +183,7 @@ class CheXQueryMedVLM(nn.Module):
     def encode_image(
         self,
         pixel_values: torch.Tensor,
+        pixel_values_lateral: Optional[torch.Tensor] = None,
         return_attention: bool = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor, torch.Tensor]:
         """
@@ -194,7 +202,23 @@ class CheXQueryMedVLM(nn.Module):
         batch_size = pixel_values.shape[0]
         
         # Get CLS and patch tokens from vision encoder
-        cls_token, patch_tokens = self.vision_encoder(pixel_values)
+        if pixel_values_lateral is None:
+            cls_token, patch_tokens = self.vision_encoder(pixel_values)
+        else:
+            if not self.multi_view_enabled:
+                raise ValueError("Multi-view input provided but multi_view_enabled is False.")
+            cls_frontal, patch_frontal = self.vision_encoder(pixel_values)
+            cls_lateral, patch_lateral = self.vision_encoder(pixel_values_lateral)
+
+            view_ids = torch.tensor([0, 1], device=pixel_values.device)
+            view_embeds = self.view_embedding(view_ids)
+            cls_frontal = cls_frontal + view_embeds[0]
+            cls_lateral = cls_lateral + view_embeds[1]
+            patch_frontal = patch_frontal + view_embeds[0].view(1, 1, -1)
+            patch_lateral = patch_lateral + view_embeds[1].view(1, 1, -1)
+
+            cls_token = self.view_fusion(torch.cat([cls_frontal, cls_lateral], dim=-1))
+            patch_tokens = self.view_fusion(torch.cat([patch_frontal, patch_lateral], dim=-1))
         
         # Get queries
         condition_queries = self.condition_queries(batch_size)
@@ -227,6 +251,7 @@ class CheXQueryMedVLM(nn.Module):
     def forward(
         self,
         pixel_values: torch.Tensor,
+        pixel_values_lateral: Optional[torch.Tensor] = None,
         texts: Optional[List[str]] = None,
         labels: Optional[torch.Tensor] = None,
         decoder_input_ids: Optional[torch.Tensor] = None,
@@ -254,6 +279,7 @@ class CheXQueryMedVLM(nn.Module):
         # Encode image
         visual_tokens, attn_weights, condition_embeds, gate_values = self.encode_image(
             pixel_values,
+            pixel_values_lateral=pixel_values_lateral,
             return_attention=return_attention,
         )
         
@@ -302,6 +328,7 @@ class CheXQueryMedVLM(nn.Module):
     def generate(
         self,
         pixel_values: torch.Tensor,
+        pixel_values_lateral: Optional[torch.Tensor] = None,
         max_length: int = 512,
         num_beams: int = 4,
         **kwargs,
@@ -319,7 +346,10 @@ class CheXQueryMedVLM(nn.Module):
             List of generated report strings
         """
         # Encode image
-        visual_tokens, _, _, _ = self.encode_image(pixel_values)
+        visual_tokens, _, _, _ = self.encode_image(
+            pixel_values,
+            pixel_values_lateral=pixel_values_lateral,
+        )
         batch_size = visual_tokens.size(0)
         
         # Build decoder prompt ids/mask to enforce output format
@@ -348,6 +378,7 @@ class CheXQueryMedVLM(nn.Module):
     def generate_with_attention(
         self,
         pixel_values: torch.Tensor,
+        pixel_values_lateral: Optional[torch.Tensor] = None,
         max_length: int = 512,
         num_beams: int = 4,
         **kwargs,
@@ -368,6 +399,7 @@ class CheXQueryMedVLM(nn.Module):
         # Encode with attention
         visual_tokens, attn_weights, _, gate_values = self.encode_image(
             pixel_values,
+            pixel_values_lateral=pixel_values_lateral,
             return_attention=True,
         )
         

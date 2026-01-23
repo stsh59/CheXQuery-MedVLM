@@ -104,13 +104,17 @@ def evaluate_model(
     
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating"):
-            images = batch["images"].to(device)
+            images = batch.get("images", batch.get("images_frontal")).to(device)
+            images_lateral = batch.get("images_lateral")
+            if images_lateral is not None:
+                images_lateral = images_lateral.to(device)
             texts = batch["texts"]
             metadata = batch["metadata"]
             
             # Generate
             predictions = model.generate(
                 images=images,
+                images_lateral=images_lateral,
                 max_length=generation_config.get("max_length", max_length),
                 min_length=generation_config.get("min_length", 20),
                 num_beams=generation_config.get("num_beams", num_beams),

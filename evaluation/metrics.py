@@ -133,9 +133,15 @@ class MedicalReportMetrics:
             metrics[f"chexbert_recall_{key}"] = recall
             metrics[f"chexbert_fn_rate_{key}"] = fn_rate
             metrics[f"chexbert_fp_rate_{key}"] = fp_rate
-        metrics["chexbert_recall_macro"] = float(np.mean([metrics[f\"chexbert_recall_{self._normalize_label_name(n)}\"] for n in self.label_names]))
-        metrics["chexbert_fn_rate_macro"] = float(np.mean([metrics[f\"chexbert_fn_rate_{self._normalize_label_name(n)}\"] for n in self.label_names]))
-        metrics["chexbert_fp_rate_macro"] = float(np.mean([metrics[f\"chexbert_fp_rate_{self._normalize_label_name(n)}\"] for n in self.label_names]))
+        metrics["chexbert_recall_macro"] = float(
+            np.mean([metrics[f"chexbert_recall_{self._normalize_label_name(n)}"] for n in self.label_names])
+        )
+        metrics["chexbert_fn_rate_macro"] = float(
+            np.mean([metrics[f"chexbert_fn_rate_{self._normalize_label_name(n)}"] for n in self.label_names])
+        )
+        metrics["chexbert_fp_rate_macro"] = float(
+            np.mean([metrics[f"chexbert_fp_rate_{self._normalize_label_name(n)}"] for n in self.label_names])
+        )
         # Abnormal vs normal recall
         ref_abnormal = (ref_labels[:, 1:] == 1).any(axis=1)
         hyp_abnormal = (hyp_labels[:, 1:] == 1).any(axis=1)

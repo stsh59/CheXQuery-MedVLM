@@ -42,6 +42,8 @@ class ChestXrayDataset(Dataset):
         image_size: int = 384,
         transform: Optional[transforms.Compose] = None,
         projection_type: Optional[str] = "Frontal",
+        projection_types: Optional[List[str]] = None,
+        require_both_views: bool = False,
         chexbert_labels: Optional[Dict[str, List[int]]] = None,
         text_output_template: Optional[str] = None,
         text_max_length: int = 512,
@@ -54,6 +56,10 @@ class ChestXrayDataset(Dataset):
         self.split = split
         self.image_size = image_size
         self.projection_type = projection_type
+        self.projection_types = projection_types
+        self.require_both_views = require_both_views
+        if self.require_both_views and (not self.projection_types or len(self.projection_types) < 2):
+            raise ValueError("require_both_views requires at least two projection_types.")
         self.chexbert_labels = chexbert_labels or {}
         
         # Text preprocessor
@@ -104,46 +110,107 @@ class ChestXrayDataset(Dataset):
         # Merge
         merged_df = projections_df.merge(reports_df, on='uid', how='inner')
         
-        # Filter by projection type
-        if self.projection_type:
-            merged_df = merged_df[merged_df['projection'] == self.projection_type]
-        
-        # Validate images and filter
+        if self.require_both_views and self.projection_types:
+            self.samples = self._build_paired_samples(merged_df)
+        else:
+            # Filter by projection type (single-view)
+            if self.projection_type:
+                merged_df = merged_df[merged_df['projection'] == self.projection_type]
+            self.samples = self._build_single_view_samples(merged_df)
+
+        logger.info(f"Loaded {len(self.samples)} {self.split} samples")
+
+    def _is_valid_image(self, image_path: Path) -> bool:
+        if not image_path.exists():
+            return False
+        try:
+            img = Image.open(image_path)
+            img.verify()
+        except Exception:
+            return False
+        return True
+
+    def _build_single_view_samples(self, merged_df: pd.DataFrame) -> List[Dict[str, str]]:
+        """Build single-view samples."""
         valid_samples = []
         images_dir = self.data_root / "images" / "images_normalized"
-        
-        for idx, row in merged_df.iterrows():
-            image_path = images_dir / row['filename']
-            
-            # Check image exists
-            if not image_path.exists():
+
+        for _, row in merged_df.iterrows():
+            image_path = images_dir / row["filename"]
+            if not self._is_valid_image(image_path):
                 continue
-            
-            # Check image is valid
-            try:
-                img = Image.open(image_path)
-                img.verify()
-            except Exception:
+
+            findings = row.get("findings", "")
+            impression = row.get("impression", "")
+            if pd.isna(impression) or str(impression).strip() == "":
                 continue
-            
-            # Check report has content
-            findings = row.get('findings', '')
-            impression = row.get('impression', '')
-            
-            if pd.isna(impression) or str(impression).strip() == '':
+
+            valid_samples.append(
+                {
+                    "uid": row["uid"],
+                    "filename": row["filename"],
+                    "image_path": str(image_path),
+                    "projection": row["projection"],
+                    "findings": str(findings) if pd.notna(findings) else "",
+                    "impression": str(impression),
+                }
+            )
+        return valid_samples
+
+    def _build_paired_samples(self, merged_df: pd.DataFrame) -> List[Dict[str, str]]:
+        """Build paired samples with required projections."""
+        images_dir = self.data_root / "images" / "images_normalized"
+        projection_types = [p for p in self.projection_types if p]
+        required = set(projection_types)
+        paired_samples = []
+        dropped_missing = 0
+
+        for uid, group in merged_df.groupby("uid"):
+            group = group[group["projection"].isin(required)]
+            if group.empty:
+                dropped_missing += 1
                 continue
-            
-            valid_samples.append({
-                'uid': row['uid'],
-                'filename': row['filename'],
-                'image_path': str(image_path),
-                'projection': row['projection'],
-                'findings': str(findings) if pd.notna(findings) else '',
-                'impression': str(impression),
-            })
-        
-        self.samples = valid_samples
-        logger.info(f"Loaded {len(self.samples)} {self.split} samples")
+
+            findings = group["findings"].iloc[0] if "findings" in group else ""
+            impression = group["impression"].iloc[0] if "impression" in group else ""
+            if pd.isna(impression) or str(impression).strip() == "":
+                continue
+
+            view_paths = {}
+            view_filenames = {}
+            for projection in projection_types:
+                proj_rows = group[group["projection"] == projection]
+                image_path = None
+                filename = None
+                for _, row in proj_rows.iterrows():
+                    candidate = images_dir / row["filename"]
+                    if self._is_valid_image(candidate):
+                        image_path = str(candidate)
+                        filename = row["filename"]
+                        break
+                if image_path is None:
+                    break
+                view_paths[projection] = image_path
+                view_filenames[projection] = filename
+
+            if set(view_paths.keys()) != required:
+                dropped_missing += 1
+                continue
+
+            paired_samples.append(
+                {
+                    "uid": uid,
+                    "view_paths": view_paths,
+                    "view_filenames": view_filenames,
+                    "findings": str(findings) if pd.notna(findings) else "",
+                    "impression": str(impression),
+                }
+            )
+
+        logger.info(
+            f"Paired samples built: {len(paired_samples)}; dropped (missing views): {dropped_missing}"
+        )
+        return paired_samples
     
     def __len__(self) -> int:
         return len(self.samples)
@@ -187,10 +254,16 @@ class ChestXrayDataset(Dataset):
         """
         sample = self.samples[idx]
         
-        # Load image
-        image = Image.open(sample['image_path']).convert('RGB')
-        if self.transform:
-            image = self.transform(image)
+        if self.require_both_views and self.projection_types:
+            image_frontal = Image.open(sample["view_paths"][self.projection_types[0]]).convert("RGB")
+            image_lateral = Image.open(sample["view_paths"][self.projection_types[1]]).convert("RGB")
+            if self.transform:
+                image_frontal = self.transform(image_frontal)
+                image_lateral = self.transform(image_lateral)
+        else:
+            image = Image.open(sample["image_path"]).convert("RGB")
+            if self.transform:
+                image = self.transform(image)
         
         # Format text
         text = self.text_preprocessor.format_structured_output(
@@ -199,7 +272,7 @@ class ChestXrayDataset(Dataset):
         )
         
         # Get CheXbert labels
-        uid_key = str(sample['uid'])
+        uid_key = str(sample["uid"])
         if uid_key in self.chexbert_labels:
             chexbert_labels = torch.tensor(
                 self.chexbert_labels[uid_key],
@@ -212,18 +285,31 @@ class ChestXrayDataset(Dataset):
             chexbert_mask = torch.tensor(0.0, dtype=torch.float32)
         
         # Metadata
+        if self.require_both_views and self.projection_types:
+            metadata = {
+                "uid": sample["uid"],
+                "view_filenames": sample["view_filenames"],
+                "projections": self.projection_types,
+            }
+            return {
+                "image_frontal": image_frontal,
+                "image_lateral": image_lateral,
+                "text": text,
+                "chexbert_labels": chexbert_labels,
+                "chexbert_mask": chexbert_mask,
+                "metadata": metadata,
+            }
         metadata = {
-            'uid': sample['uid'],
-            'filename': sample['filename'],
-            'projection': sample['projection'],
+            "uid": sample["uid"],
+            "filename": sample["filename"],
+            "projection": sample["projection"],
         }
-        
         return {
-            'image': image,
-            'text': text,
-            'chexbert_labels': chexbert_labels,
-            'chexbert_mask': chexbert_mask,
-            'metadata': metadata,
+            "image": image,
+            "text": text,
+            "chexbert_labels": chexbert_labels,
+            "chexbert_mask": chexbert_mask,
+            "metadata": metadata,
         }
 
 
@@ -237,16 +323,29 @@ def collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     Returns:
         Batched dictionary
     """
-    images = torch.stack([item['image'] for item in batch])
-    texts = [item['text'] for item in batch]
-    chexbert_labels = torch.stack([item['chexbert_labels'] for item in batch])
-    chexbert_mask = torch.stack([item['chexbert_mask'] for item in batch])
-    metadata = [item['metadata'] for item in batch]
-    
+    if "image_frontal" in batch[0]:
+        images_frontal = torch.stack([item["image_frontal"] for item in batch])
+        images_lateral = torch.stack([item["image_lateral"] for item in batch])
+    else:
+        images = torch.stack([item["image"] for item in batch])
+    texts = [item["text"] for item in batch]
+    chexbert_labels = torch.stack([item["chexbert_labels"] for item in batch])
+    chexbert_mask = torch.stack([item["chexbert_mask"] for item in batch])
+    metadata = [item["metadata"] for item in batch]
+
+    if "image_frontal" in batch[0]:
+        return {
+            "images_frontal": images_frontal,
+            "images_lateral": images_lateral,
+            "texts": texts,
+            "chexbert_labels": chexbert_labels,
+            "chexbert_mask": chexbert_mask,
+            "metadata": metadata,
+        }
     return {
-        'images': images,
-        'texts': texts,
-        'chexbert_labels': chexbert_labels,
-        'chexbert_mask': chexbert_mask,
-        'metadata': metadata,
+        "images": images,
+        "texts": texts,
+        "chexbert_labels": chexbert_labels,
+        "chexbert_mask": chexbert_mask,
+        "metadata": metadata,
     }

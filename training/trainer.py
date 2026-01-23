@@ -69,6 +69,8 @@ def train_model(
         num_workers=training_settings.get("num_workers", 4),
         image_size=data_config.get("image", {}).get("size", 384),
         projection_type=data_config.get("filtering", {}).get("projection_type", "Frontal"),
+        projection_types=data_config.get("filtering", {}).get("projection_types"),
+        require_both_views=data_config.get("filtering", {}).get("require_both_views", False),
         splits_file=data_config.get("splits", {}).get("split_file"),
         text_output_template=data_config.get("text", {}).get("output_template"),
         text_max_length=data_config.get("text", {}).get("max_length", 512),

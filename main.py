@@ -142,47 +142,85 @@ def generate(args):
         std=data_config.get("image", {}).get("std", [0.5, 0.5, 0.5]),
     )
     
-    # Generate for each image
+    require_both_views = data_config.get("filtering", {}).get("require_both_views", False)
+
     image_paths = args.images
     if len(image_paths) == 1 and Path(image_paths[0]).is_dir():
-        # Directory provided
         image_dir = Path(image_paths[0])
         image_paths = list(image_dir.glob("*.png")) + list(image_dir.glob("*.jpg"))
-    
-    for image_path in image_paths:
-        logger.info(f"Processing: {image_path}")
-        
-        # Load and transform image
-        image = Image.open(image_path).convert("RGB")
-        image_tensor = transform(image).unsqueeze(0).to(device)
-        
-        # Generate
-        with torch.no_grad():
-            report = model.generate(
-                images=image_tensor,
-                max_length=generation_config.get("max_length", args.max_length),
-                min_length=generation_config.get("min_length", 20),
-                num_beams=generation_config.get("num_beams", args.num_beams),
-                length_penalty=generation_config.get("length_penalty", 1.0),
-                no_repeat_ngram_size=generation_config.get("no_repeat_ngram_size", 3),
-                early_stopping=generation_config.get("early_stopping", True),
-                do_sample=generation_config.get("do_sample", False),
-                temperature=generation_config.get("temperature", 1.0),
-                top_p=generation_config.get("top_p", 1.0),
-                top_k=generation_config.get("top_k", 50),
-            )[0]
-        report = postprocess_generated_report(
-            report,
-            prompt_template=data_config.get("text", {}).get("prompt_template", ""),
-            apply_prompt_strip=postprocess_config.get("strip_prompt", True),
-            apply_impression_consistency=postprocess_config.get("impression_consistency", False),
-        )
-        
-        print(f"\n{'='*60}")
-        print(f"Image: {image_path}")
-        print(f"{'='*60}")
-        print(f"Report: {report}")
-        print(f"{'='*60}\n")
+
+    if require_both_views:
+        if len(image_paths) % 2 != 0:
+            raise ValueError("Multi-view generation requires pairs of image paths (frontal, lateral).")
+        image_pairs = list(zip(image_paths[0::2], image_paths[1::2]))
+        for frontal_path, lateral_path in image_pairs:
+            logger.info(f"Processing pair: {frontal_path} + {lateral_path}")
+
+            frontal = Image.open(frontal_path).convert("RGB")
+            lateral = Image.open(lateral_path).convert("RGB")
+            frontal_tensor = transform(frontal).unsqueeze(0).to(device)
+            lateral_tensor = transform(lateral).unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                report = model.generate(
+                    images=frontal_tensor,
+                    images_lateral=lateral_tensor,
+                    max_length=generation_config.get("max_length", args.max_length),
+                    min_length=generation_config.get("min_length", 20),
+                    num_beams=generation_config.get("num_beams", args.num_beams),
+                    length_penalty=generation_config.get("length_penalty", 1.0),
+                    no_repeat_ngram_size=generation_config.get("no_repeat_ngram_size", 3),
+                    early_stopping=generation_config.get("early_stopping", True),
+                    do_sample=generation_config.get("do_sample", False),
+                    temperature=generation_config.get("temperature", 1.0),
+                    top_p=generation_config.get("top_p", 1.0),
+                    top_k=generation_config.get("top_k", 50),
+                )[0]
+            report = postprocess_generated_report(
+                report,
+                prompt_template=data_config.get("text", {}).get("prompt_template", ""),
+                apply_prompt_strip=postprocess_config.get("strip_prompt", True),
+                apply_impression_consistency=postprocess_config.get("impression_consistency", False),
+            )
+
+            print(f"\n{'='*60}")
+            print(f"Images: {frontal_path} | {lateral_path}")
+            print(f"{'='*60}")
+            print(f"Report: {report}")
+            print(f"{'='*60}\n")
+    else:
+        for image_path in image_paths:
+            logger.info(f"Processing: {image_path}")
+
+            image = Image.open(image_path).convert("RGB")
+            image_tensor = transform(image).unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                report = model.generate(
+                    images=image_tensor,
+                    max_length=generation_config.get("max_length", args.max_length),
+                    min_length=generation_config.get("min_length", 20),
+                    num_beams=generation_config.get("num_beams", args.num_beams),
+                    length_penalty=generation_config.get("length_penalty", 1.0),
+                    no_repeat_ngram_size=generation_config.get("no_repeat_ngram_size", 3),
+                    early_stopping=generation_config.get("early_stopping", True),
+                    do_sample=generation_config.get("do_sample", False),
+                    temperature=generation_config.get("temperature", 1.0),
+                    top_p=generation_config.get("top_p", 1.0),
+                    top_k=generation_config.get("top_k", 50),
+                )[0]
+            report = postprocess_generated_report(
+                report,
+                prompt_template=data_config.get("text", {}).get("prompt_template", ""),
+                apply_prompt_strip=postprocess_config.get("strip_prompt", True),
+                apply_impression_consistency=postprocess_config.get("impression_consistency", False),
+            )
+
+            print(f"\n{'='*60}")
+            print(f"Image: {image_path}")
+            print(f"{'='*60}")
+            print(f"Report: {report}")
+            print(f"{'='*60}\n")
 
 
 def visualize(args):
@@ -222,44 +260,80 @@ def visualize(args):
         std=data_config.get("image", {}).get("std", [0.5, 0.5, 0.5]),
     )
     
-    # Process images
-    for image_path in args.images:
-        logger.info(f"Processing: {image_path}")
-        
-        # Load image
-        image = Image.open(image_path).convert("RGB")
-        image_tensor = transform(image).unsqueeze(0).to(device)
-        
-        # Generate with attention
-        with torch.no_grad():
-            generated, attn_weights, gate_values = model.model.generate_with_attention(
-                pixel_values=image_tensor,
-                max_length=generation_config.get("max_length", args.max_length),
-                num_beams=generation_config.get("num_beams", args.num_beams),
+    require_both_views = data_config.get("filtering", {}).get("require_both_views", False)
+
+    if require_both_views:
+        if len(args.images) % 2 != 0:
+            raise ValueError("Multi-view visualization requires pairs of image paths (frontal, lateral).")
+        image_pairs = list(zip(args.images[0::2], args.images[1::2]))
+        for frontal_path, lateral_path in image_pairs:
+            logger.info(f"Processing pair: {frontal_path} + {lateral_path}")
+
+            frontal = Image.open(frontal_path).convert("RGB")
+            lateral = Image.open(lateral_path).convert("RGB")
+            frontal_tensor = transform(frontal).unsqueeze(0).to(device)
+            lateral_tensor = transform(lateral).unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                generated, attn_weights, gate_values = model.model.generate_with_attention(
+                    pixel_values=frontal_tensor,
+                    pixel_values_lateral=lateral_tensor,
+                    max_length=generation_config.get("max_length", args.max_length),
+                    num_beams=generation_config.get("num_beams", args.num_beams),
+                )
+
+            condition_names = model.model.get_condition_names()
+            region_names = model.model.get_region_names()
+
+            num_condition = len(condition_names)
+            condition_attn = attn_weights[0, :num_condition, :]
+            anatomical_attn = attn_weights[0, num_condition:, :]
+
+            sample_id = f"{Path(frontal_path).stem}_{Path(lateral_path).stem}"
+            save_all_visualizations(
+                image=frontal_tensor[0],
+                condition_attention=condition_attn,
+                anatomical_attention=anatomical_attn,
+                condition_names=condition_names,
+                region_names=region_names,
+                output_dir=args.output_dir,
+                sample_id=sample_id,
             )
-        
-        # Get query names
-        condition_names = model.model.get_condition_names()
-        region_names = model.model.get_region_names()
-        
-        # Split attention weights
-        num_condition = len(condition_names)
-        condition_attn = attn_weights[0, :num_condition, :]
-        anatomical_attn = attn_weights[0, num_condition:, :]
-        
-        # Save visualizations
-        sample_id = Path(image_path).stem
-        save_all_visualizations(
-            image=image_tensor[0],
-            condition_attention=condition_attn,
-            anatomical_attention=anatomical_attn,
-            condition_names=condition_names,
-            region_names=region_names,
-            output_dir=args.output_dir,
-            sample_id=sample_id,
-        )
-        
-        logger.info(f"Generated report: {generated[0]}")
+
+            logger.info(f"Generated report: {generated[0]}")
+    else:
+        for image_path in args.images:
+            logger.info(f"Processing: {image_path}")
+
+            image = Image.open(image_path).convert("RGB")
+            image_tensor = transform(image).unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                generated, attn_weights, gate_values = model.model.generate_with_attention(
+                    pixel_values=image_tensor,
+                    max_length=generation_config.get("max_length", args.max_length),
+                    num_beams=generation_config.get("num_beams", args.num_beams),
+                )
+
+            condition_names = model.model.get_condition_names()
+            region_names = model.model.get_region_names()
+
+            num_condition = len(condition_names)
+            condition_attn = attn_weights[0, :num_condition, :]
+            anatomical_attn = attn_weights[0, num_condition:, :]
+
+            sample_id = Path(image_path).stem
+            save_all_visualizations(
+                image=image_tensor[0],
+                condition_attention=condition_attn,
+                anatomical_attention=anatomical_attn,
+                condition_names=condition_names,
+                region_names=region_names,
+                output_dir=args.output_dir,
+                sample_id=sample_id,
+            )
+
+            logger.info(f"Generated report: {generated[0]}")
 
 
 def compute_chexbert_labels(args):

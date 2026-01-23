@@ -60,6 +60,7 @@ class CheXQueryLightningModule(pl.LightningModule):
             num_attn_heads=model_config.get("cross_attention", {}).get("num_heads", 8),
             ffn_dim=model_config.get("cross_attention", {}).get("ffn_dim", 3072),
             num_pool_queries=model_config.get("gated_fusion", {}).get("num_pool_queries", 10),
+            multi_view_enabled=model_config.get("multi_view", {}).get("enabled", False),
             decoder_model_name=model_config.get("text_decoder", {}).get("model_name", "google/flan-t5-base"),
             decoder_use_lora=model_config.get("text_decoder", {}).get("lora", {}).get("enabled", True),
             decoder_lora_rank=model_config.get("text_decoder", {}).get("lora", {}).get("rank", 16),
@@ -128,8 +129,10 @@ class CheXQueryLightningModule(pl.LightningModule):
     
     def forward(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         """Forward pass."""
+        pixel_values_lateral = batch.get("images_lateral")
         outputs = self.model(
-            pixel_values=batch["images"],
+            pixel_values=batch.get("images", batch.get("images_frontal")),
+            pixel_values_lateral=pixel_values_lateral,
             texts=batch["texts"],
             chexbert_labels=batch.get("chexbert_labels"),
             chexbert_mask=batch.get("chexbert_mask"),
@@ -278,6 +281,7 @@ class CheXQueryLightningModule(pl.LightningModule):
     def generate(
         self,
         images: torch.Tensor,
+        images_lateral: Optional[torch.Tensor] = None,
         max_length: int = 512,
         num_beams: int = 4,
         **kwargs,
@@ -286,6 +290,7 @@ class CheXQueryLightningModule(pl.LightningModule):
         self.model.eval()
         return self.model.generate(
             pixel_values=images,
+            pixel_values_lateral=images_lateral,
             max_length=max_length,
             num_beams=num_beams,
             **kwargs,

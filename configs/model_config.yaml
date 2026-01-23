@@ -17,6 +17,11 @@ vision_encoder:
     dropout: 0.05
     target_modules: ["q_proj", "v_proj"]
 
+# Multi-view settings
+multi_view:
+  enabled: true
+  fusion: "concat"
+
 # Condition Queries (CheXbert-initialized)
 condition_queries:
   num_queries: 14

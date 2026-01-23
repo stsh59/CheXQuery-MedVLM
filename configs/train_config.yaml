@@ -53,8 +53,8 @@ phase1:
 phase2:
   name: "end_to_end"
   epochs: 30
-  batch_size: 8
-  gradient_accumulation_steps: 4
+  batch_size: 4
+  gradient_accumulation_steps: 8
   effective_batch_size: 32
   
   # Frozen modules

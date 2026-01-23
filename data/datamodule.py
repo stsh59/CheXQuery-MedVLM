@@ -40,6 +40,8 @@ class ChestXrayDataModule(pl.LightningDataModule):
         num_workers: int = 4,
         image_size: int = 384,
         projection_type: str = "Frontal",
+        projection_types: Optional[List[str]] = None,
+        require_both_views: bool = False,
         train_ratio: float = 0.7,
         val_ratio: float = 0.15,
         seed: int = 42,
@@ -58,6 +60,8 @@ class ChestXrayDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.image_size = image_size
         self.projection_type = projection_type
+        self.projection_types = projection_types
+        self.require_both_views = require_both_views
         self.train_ratio = train_ratio
         self.val_ratio = val_ratio
         self.test_ratio = 1 - train_ratio - val_ratio
@@ -119,6 +123,8 @@ class ChestXrayDataModule(pl.LightningDataModule):
                 split="train",
                 image_size=self.image_size,
                 projection_type=self.projection_type,
+                projection_types=self.projection_types,
+                require_both_views=self.require_both_views,
                 chexbert_labels=self.chexbert_labels,
                 text_output_template=self.text_output_template,
                 text_max_length=self.text_max_length,
@@ -133,6 +139,8 @@ class ChestXrayDataModule(pl.LightningDataModule):
                 split="val",
                 image_size=self.image_size,
                 projection_type=self.projection_type,
+                projection_types=self.projection_types,
+                require_both_views=self.require_both_views,
                 chexbert_labels=self.chexbert_labels,
                 text_output_template=self.text_output_template,
                 text_max_length=self.text_max_length,
@@ -147,6 +155,8 @@ class ChestXrayDataModule(pl.LightningDataModule):
                 split="test",
                 image_size=self.image_size,
                 projection_type=self.projection_type,
+                projection_types=self.projection_types,
+                require_both_views=self.require_both_views,
                 chexbert_labels=self.chexbert_labels,
                 text_output_template=self.text_output_template,
                 text_max_length=self.text_max_length,
