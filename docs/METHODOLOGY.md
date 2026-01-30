@@ -414,7 +414,7 @@ visual_tokens → used AS encoder hidden → decoder → report
 #### Prompt-Guided Decoding (Enabled)
 We prepend a short prompt to the decoder to enforce the exact output structure:
 
-- **Prompt source:** `configs/data_config.yaml` → `prompt_template` (same as `get_prompt_template()`)
+- **Prompt source:** `configs/data_config.yaml` → `text.prompt_template`. If not provided, the model falls back to `get_prompt_template()` from `data/preprocessing.py`.
 - **Training:** prompt + target text → tokenized → decoder_input_ids/labels
 - **Inference:** prompt tokenized → passed as `decoder_input_ids` to `generate()`
 
@@ -576,6 +576,11 @@ python main.py chexbert_labels \
   --output-path outputs/chexbert_labels.json \
   --batch-size 32
 ```
+
+**Implementation details (current codebase):**
+- Downloads the dataset root via `kagglehub.dataset_download(...)` using `dataset.kaggle_dataset`.
+- Reads reports from `dataset.reports_csv`, then formats them with `TextPreprocessor.format_structured_output(...)`.
+- Resolves the CheXbert labeler from `f1chexbert` via `.label`, `.get_label`, or a direct callable.
 
 **Abnormal-aware sampling:**  
 During training, the DataLoader can oversample abnormal cases to target ~50% abnormal per batch (controlled by `sampling` in `data_config.yaml`). This uses CheXbert labels and treats any positive label **except “No Finding”** as abnormal.
@@ -779,14 +784,18 @@ Outputs:
 Before computing metrics (comprehensive normalization):
 1. Handle empty/None values gracefully
 2. Lowercase all text (case-insensitive comparison)
-3. Remove structural prefixes ("Findings:", "Impression:", "|")
+3. Remove structural prefixes anywhere in the text ("Findings:", "Impression:", and pipe separators)
 4. Normalize unicode characters (smart quotes → straight quotes, en-dash → hyphen)
-5. Optional punctuation removal (controlled by `eval_config.yaml`, default: false)
+5. Optional punctuation removal (controlled by `eval_config.yaml`, default: false; if no eval config is passed, the metric code defaults to `remove_punctuation=True`)
 6. Normalize whitespace
 7. Tokenize with NLTK word_tokenize
 8. Skip invalid pairs (empty reference or hypothesis)
 
 > **Why optionally remove punctuation?** Punctuation attached to words creates different tokens ("normal." vs "normal"), unfairly penalizing BLEU/ROUGE scores for semantically identical content. The default config keeps punctuation for more faithful text matching.
+
+### 8.5 Evaluation Outputs (Current Codebase)
+- Metrics are saved to `outputs/evaluation/metrics.json`.
+- Predictions are saved to `outputs/evaluation/predictions.csv` with `uid`, `filename` (or paired view filenames), `reference`, and `prediction`.
 
 ---
 

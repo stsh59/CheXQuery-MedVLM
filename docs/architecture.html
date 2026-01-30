@@ -914,6 +914,10 @@ This means:
                     (prepended to targets) and inference (as decoder start tokens), so the decoder
                     consistently follows the required template.
                 </p>
+                <p>
+                    The prompt is read from <code>configs/data_config.yaml</code> (<code>text.prompt_template</code>).
+                    If it is missing, the model falls back to the template in <code>data/preprocessing.py</code>.
+                </p>
                 <pre>
 Prompt (from config):
 "Generate a structured radiology report for this chest X-ray image.
@@ -1118,6 +1122,11 @@ Sampling:
             <p>
                 CheXbert scoring/labeling uses the <code>f1chexbert</code> package by default. The current
                 code does not load a local <code>chexbert.pth</code> unless you customize the labeler.
+            </p>
+            <p>
+                Label generation downloads the dataset root via <code>kagglehub.dataset_download(...)</code>,
+                reads <code>dataset.reports_csv</code>, formats reports with <code>TextPreprocessor</code>, and
+                resolves the labeler via <code>.label</code>, <code>.get_label</code>, or a direct callable.
             </p>
 
             <h3>4.6 Post-processing Guardrails</h3>
@@ -1454,13 +1463,13 @@ This measures: "Did we correctly identify the clinical findings?"</pre>
 Normalization Steps:
 ├── Handle empty/None values gracefully
 ├── Lowercase all text (case-insensitive)
-├── Remove structural prefixes ("Findings:", "Impression:", "|")
+├── Remove structural prefixes anywhere in the text ("Findings:", "Impression:", "|")
 ├── Normalize unicode characters:
 │   ├── Smart quotes → straight quotes (' → ', " → ")
 │   ├── En-dash/em-dash → hyphen (– → -, — → -)
 │   └── Non-breaking space → regular space
 ├── Optional punctuation removal (configurable)
-│   └── Default: keep punctuation (remove_punctuation: false)
+│   └── Default: keep punctuation (remove_punctuation: false; if no eval config is passed, the metric code defaults to true)
 ├── Normalize whitespace
 ├── Tokenize with NLTK word_tokenize
 └── Skip invalid pairs (empty ref or hyp)
@@ -1470,6 +1479,14 @@ Why optionally remove punctuation?
 ├── "heart is normal"  tokenizes to ["heart", "is", "normal"]
 ├── These are semantically identical but n-gram different!
 └── Removal is available when you want stricter n-gram fairness</pre>
+            <div class="component-card">
+                <h4>Evaluation Outputs</h4>
+                <p>Evaluation saves metrics and predictions for inspection:</p>
+                <pre>
+outputs/evaluation/metrics.json
+outputs/evaluation/predictions.csv  # uid, filename(s), reference, prediction
+                </pre>
+            </div>
         </div>
         
         <!-- Section 8: Inference -->

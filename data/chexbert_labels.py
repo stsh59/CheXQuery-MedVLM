@@ -20,9 +20,9 @@ def _get_chexbert_labeler():
         scorer = F1CheXbert()
         for attr in ["labeler", "chexbert", "model"]:
             obj = getattr(scorer, attr, None)
-            if obj is not None and hasattr(obj, "label"):
+            if obj is not None and (hasattr(obj, "label") or hasattr(obj, "get_label")):
                 return obj
-        if hasattr(scorer, "label"):
+        if hasattr(scorer, "label") or hasattr(scorer, "get_label"):
             return scorer
     except Exception as e:
         raise RuntimeError(f"CheXbert labeler unavailable: {e}") from e
@@ -61,9 +61,11 @@ def compute_chexbert_labels(
     logger.info(f"Computing CheXbert labels for {len(texts)} reports...")
     for i in range(0, len(texts), batch_size):
         batch_texts = texts[i:i + batch_size]
-        try:
+        if hasattr(labeler, "label"):
             batch_labels = labeler.label(batch_texts)
-        except Exception:
+        elif hasattr(labeler, "get_label"):
+            batch_labels = [labeler.get_label(t) for t in batch_texts]
+        else:
             batch_labels = labeler(batch_texts)
         for uid, lbl in zip(uids[i:i + batch_size], batch_labels):
             labels[uid] = [int(x) for x in lbl]

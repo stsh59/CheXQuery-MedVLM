@@ -75,10 +75,10 @@ class MedicalReportMetrics:
             # Try common access patterns for a labeler
             for attr in ["labeler", "chexbert", "model"]:
                 obj = getattr(scorer, attr, None)
-                if obj is not None and hasattr(obj, "label"):
+                if obj is not None and (hasattr(obj, "label") or hasattr(obj, "get_label")):
                     self._chexbert_labeler = obj
                     return self._chexbert_labeler
-            if hasattr(scorer, "label"):
+            if hasattr(scorer, "label") or hasattr(scorer, "get_label"):
                 self._chexbert_labeler = scorer
                 return self._chexbert_labeler
         except Exception as e:
@@ -90,12 +90,12 @@ class MedicalReportMetrics:
         if labeler is None:
             return None
         try:
-            labels = labeler.label(texts)
-            return np.array(labels)
-        except Exception:
-            pass
-        try:
-            labels = labeler(texts)
+            if hasattr(labeler, "label"):
+                labels = labeler.label(texts)
+            elif hasattr(labeler, "get_label"):
+                labels = [labeler.get_label(t) for t in texts]
+            else:
+                labels = labeler(texts)
             return np.array(labels)
         except Exception as e:
             logger.warning(f"CheXbert label extraction failed: {e}")
@@ -446,15 +446,23 @@ class MedicalReportMetrics:
                 from f1chexbert import F1CheXbert
                 self._chexbert_scorer = F1CheXbert()
             
-            accuracy, accuracy_per_sample, chexbert_all, chexbert_5 = self._chexbert_scorer(
-                hyps=hypotheses,
-                refs=references,
-            )
+            result = self._chexbert_scorer(hyps=hypotheses, refs=references)
+            chexbert_all = None
+            if isinstance(result, tuple):
+                if len(result) >= 3:
+                    chexbert_all = result[2]
+                elif len(result) == 2:
+                    chexbert_all = result[1]
+            elif isinstance(result, dict):
+                chexbert_all = result
+            if chexbert_all is None:
+                raise ValueError("CheXbert scorer output not understood")
             
+            summary = chexbert_all.get("micro avg") or chexbert_all.get("macro avg") or {}
             return {
-                'chexbert_precision': chexbert_all['precision'],
-                'chexbert_recall': chexbert_all['recall'],
-                'chexbert_f1': chexbert_all['f1'],
+                "chexbert_precision": summary.get("precision", 0.0),
+                "chexbert_recall": summary.get("recall", 0.0),
+                "chexbert_f1": summary.get("f1-score", 0.0),
             }
             
         except Exception as e:

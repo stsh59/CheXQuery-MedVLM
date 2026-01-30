@@ -88,13 +88,14 @@ class AuxiliaryClassificationHead(nn.Module):
         if mask is not None:
             if mask.dim() == 1:
                 mask = mask.unsqueeze(-1).expand_as(logits)
+            if class_weights is not None and class_weights.dim() == 1:
+                class_weights = class_weights.unsqueeze(0).expand_as(logits)
             mask = mask > 0
             if mask.sum() == 0:
                 return None
             logits = logits[mask]
             targets = targets[mask]
-            if class_weights is not None and class_weights.dim() == 1:
-                class_weights = class_weights.unsqueeze(0).expand_as(targets)
+            if class_weights is not None:
                 class_weights = class_weights[mask]
         
         if class_weights is not None:
