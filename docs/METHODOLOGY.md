@@ -141,6 +141,8 @@ Query-based architecture with:
 
 ### 3.2 High-Level Diagram (System View)
 
+![CheXQuery-MedVLM Full Architecture](architecture_full.png)
+
 ```
 [Input X-ray] 
      │
@@ -168,7 +170,7 @@ Query-based architecture with:
 Data (IU-Xray)
   ├── images/images_normalized/  → image transforms (resize, rotate, affine, jitter)
   ├── indiana_reports.csv        → text cleaning + structured formatting
-  └── indiana_projections.csv    → projection filter (Frontal)
+  └── indiana_projections.csv    → projection filter (Frontal/Lateral)
 
 Splits (patient-level)
   ├── train/val/test UIDs
@@ -188,7 +190,15 @@ Evaluation
   └── metrics (BLEU/ROUGE/BERTScore/CheXbert + FN/FP rates)
 ```
 
-### 3.2 Dimension Summary
+### 3.4 Multi-View Encoding (Frontal + Lateral)
+
+This codebase supports **paired frontal and lateral inputs** when enabled in config. The two views are encoded with shared SigLIP weights, tagged with learnable view embeddings, and fused via concatenation + linear projection before the query-based attention modules. This allows the model to use complementary views while keeping parameter count stable.
+
+**Key config knobs:**
+- `configs/data_config.yaml` → `filtering.require_both_views: true` and `projection_types: ["Frontal", "Lateral"]`
+- `configs/model_config.yaml` → `multi_view.enabled: true`
+
+### 3.5 Dimension Summary
 
 | Stage | Tensor Shape | Description |
 |-------|--------------|-------------|
@@ -226,6 +236,9 @@ alpha: 32
 dropout: 0.05
 target_modules: ["q_proj", "v_proj"]
 ```
+
+#### Multi-View Handling (Current Default)
+When `multi_view.enabled: true`, the same SigLIP encoder is applied to **frontal** and **lateral** images. View-specific embeddings are added to each token stream, then the two streams are fused (concat + linear projection) before queries attend. This keeps parameters stable while adding view context.
 
 #### Why LoRA?
 - Full fine-tuning: 86M parameters
@@ -477,7 +490,9 @@ All 14 queries → [B, 14] logits
 | Total Images | ~7,470 |
 | Total Reports | ~3,955 |
 | Projections | Frontal, Lateral |
-| We Use | Frontal only |
+| We Use | Paired Frontal + Lateral (default) |
+
+**Single-view mode:** set `filtering.require_both_views: false` and select a single `projection_type` in `configs/data_config.yaml`.
 
 ### 5.2 Data Splits
 
@@ -565,6 +580,9 @@ python main.py chexbert_labels \
 **Abnormal-aware sampling:**  
 During training, the DataLoader can oversample abnormal cases to target ~50% abnormal per batch (controlled by `sampling` in `data_config.yaml`). This uses CheXbert labels and treats any positive label **except “No Finding”** as abnormal.
 
+**CheXbert model source:**  
+The implementation uses the `f1chexbert` package for scoring/labeling. The repo does not load a local `chexbert.pth` by default; if you want to use a custom checkpoint, the labeler instantiation must be adapted accordingly.
+
 ### 5.6 Post-processing Guardrails (Generation & Evaluation)
 
 After decoding, we apply **post-processing** to reduce prompt leakage and contradiction:
@@ -622,19 +640,7 @@ loss_weights:
 ```
 
 **Phase 1 Diagram (Query Alignment):**
-```
-Images → SigLIP (frozen) → CLS + Patch Tokens
-                 │
-     Condition Queries + Anatomical Queries
-                 │
-          Cross-Attention (train)
-                 │
-           Gated Fusion (train)
-                 │
-   ┌─────────────┴─────────────┐
-   │                           │
-Aux Head (train)          Flan-T5 (frozen)
-```
+![Phase 1 Diagram](phase1.png)
 
 #### Phase 2: End-to-End Fine-tuning (30 epochs)
 
@@ -652,7 +658,8 @@ Aux Head (train)          Flan-T5 (frozen)
 
 **Hyperparameters:**
 ```yaml
-batch_size: 8 (effective: 32)
+batch_size: 4 (effective: 32)
+gradient_accumulation_steps: 8
 learning_rate: 3e-5
 warmup_steps: 500
 label_smoothing: 0.05
@@ -662,19 +669,7 @@ loss_weights:
 ```
 
 **Phase 2 Diagram (End-to-End with LoRA):**
-```
-Images → SigLIP (LoRA) → CLS + Patch Tokens
-                 │
-     Condition Queries + Anatomical Queries (train)
-                 │
-          Cross-Attention (train)
-                 │
-           Gated Fusion (train)
-                 │
-   ┌─────────────┴─────────────┐
-   │                           │
-Aux Head (train)          Flan-T5 (LoRA)
-```
+![Phase 2 Diagram](phase2.png)
 
 #### Phase 3: Generation Fine-tuning (Optional, 15 epochs)
 
@@ -686,17 +681,7 @@ Aux Head (train)          Flan-T5 (LoRA)
 - Learning rate: 2e-5
 
 **Phase 3 Diagram (Generation Polish):**
-```
-Images → SigLIP (frozen) → CLS + Patch Tokens
-                 │
-   Condition/Anatomical Queries (train)
-                 │
-        Cross-Attention (train)
-                 │
-         Gated Fusion (train)
-                 │
-          Flan-T5 (train)
-```
+![Phase 3 Diagram](phase3.png)
 
 ---
 
@@ -796,12 +781,12 @@ Before computing metrics (comprehensive normalization):
 2. Lowercase all text (case-insensitive comparison)
 3. Remove structural prefixes ("Findings:", "Impression:", "|")
 4. Normalize unicode characters (smart quotes → straight quotes, en-dash → hyphen)
-5. Remove punctuation (so "normal." and "normal" match as same token)
+5. Optional punctuation removal (controlled by `eval_config.yaml`, default: false)
 6. Normalize whitespace
 7. Tokenize with NLTK word_tokenize
 8. Skip invalid pairs (empty reference or hypothesis)
 
-> **Why remove punctuation?** Punctuation attached to words creates different tokens ("normal." vs "normal"), unfairly penalizing BLEU/ROUGE scores for semantically identical content.
+> **Why optionally remove punctuation?** Punctuation attached to words creates different tokens ("normal." vs "normal"), unfairly penalizing BLEU/ROUGE scores for semantically identical content. The default config keeps punctuation for more faithful text matching.
 
 ---
 
@@ -943,9 +928,11 @@ python main.py generate \
   --train-config configs/train_config.yaml \
   --data-config configs/data_config.yaml \
   --eval-config configs/eval_config.yaml \
-  --images path/to/image_or_dir \
+  --images path/to/frontal.png path/to/lateral.png \
   --max-length 512 \
   --num-beams 4
+
+Note: when `filtering.require_both_views: true`, images must be provided as paired (frontal, lateral). For single-view use, disable the flag and pass a directory or a single image.
 
 
 python main.py visualize \
@@ -954,7 +941,7 @@ python main.py visualize \
   --train-config configs/train_config.yaml \
   --data-config configs/data_config.yaml \
   --eval-config configs/eval_config.yaml \
-  --images path/to/image.png \
+  --images path/to/frontal.png path/to/lateral.png \
   --output-dir outputs/visualizations
 ```
 
@@ -962,6 +949,65 @@ python main.py visualize \
 - The architecture is fully trained after Phase 1 + Phase 2.
 - Phase 3 adds no new components; it just polishes generation (fluency/format) with vision frozen and aux loss off.
 - Skip if Phase 2 metrics are satisfactory or data is small; run if you want a slight fluency boost without touching the vision backbone.
+
+---
+
+## 12. Configuration Reference (Key Knobs)
+
+### 12.1 Model Config (`configs/model_config.yaml`)
+```yaml
+vision_encoder:
+  model_name: "google/siglip-base-patch16-384"
+  lora:
+    enabled: true
+    rank: 16
+    alpha: 32
+    dropout: 0.05
+
+multi_view:
+  enabled: true
+  fusion: "concat"
+
+text_decoder:
+  model_name: "google/flan-t5-base"
+  lora:
+    enabled: true
+    rank: 16
+    alpha: 32
+    dropout: 0.05
+```
+
+### 12.2 Data Config (`configs/data_config.yaml`)
+```yaml
+filtering:
+  projection_types: ["Frontal", "Lateral"]
+  require_both_views: true
+  projection_type: "Frontal"  # used when require_both_views: false
+
+sampling:
+  enable: true
+  abnormal_ratio: 0.5
+```
+
+### 12.3 Train Config (`configs/train_config.yaml`)
+```yaml
+phase2:
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  optimizer:
+    lr: 3.0e-5
+```
+
+### 12.4 Eval Config (`configs/eval_config.yaml`)
+```yaml
+generation:
+  num_beams: 4
+  no_repeat_ngram_size: 2
+  length_penalty: 1.1
+
+normalization:
+  remove_punctuation: false
+```
 
 ---
 

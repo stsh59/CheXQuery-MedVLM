@@ -472,12 +472,17 @@
                     <text x="750" y="560" font-size="10" fill="#64748b">Frozen + LoRA + Prompt</text>
                 </svg>
             </div>
+
+            <div class="diagram-container">
+                <h4>Paper-Style Architecture (Multi-View)</h4>
+                <img src="architecture_full.png" alt="CheXQuery-MedVLM Multi-View Architecture" style="width:100%; max-width:1000px; display:block; margin:0 auto;">
+            </div>
             
             <h3>2.2 Data Flow Summary</h3>
             <div class="flow-diagram">
-                <div class="flow-box input">📷 Input Image: [Batch, 3, 384, 384]</div>
+                <div class="flow-box input">📷 Input Images: Frontal + Lateral (paired)</div>
                 <div class="arrow">↓</div>
-                <div class="flow-box vision">🔍 SigLIP Vision Encoder → CLS [B, 768] + Patches [B, 576, 768]</div>
+                <div class="flow-box vision">🔍 Shared SigLIP Encoder → CLS/Patches per view → Fuse</div>
                 <div class="arrow">↓</div>
                 <div class="side-by-side">
                     <div class="flow-box query">🏥 Condition Queries [B, 14, 768]</div>
@@ -499,7 +504,10 @@
 IU-Xray Dataset
 ├── images/images_normalized/        → image transforms (resize, rotate, affine, jitter)
 ├── indiana_reports.csv              → text cleaning + structured formatting
-└── indiana_projections.csv          → projection filter (Frontal)
+└── indiana_projections.csv          → projection filter (Frontal + Lateral pairing)
+
+Pairing (when require_both_views = true)
+└── group by UID and keep only Frontal + Lateral pairs
 
 Patient-level Splits
 └── outputs/splits/data_splits.json  → train/val/test UIDs
@@ -559,10 +567,20 @@ Evaluation
                 </p>
                 <pre>
 LoRA Config:
-- Rank (r): 8
-- Alpha: 16  
+- Rank (r): 16
+- Alpha: 32  
 - Dropout: 0.05
 - Target: ["q_proj", "v_proj"]</pre>
+            </div>
+
+            <div class="component-card">
+                <h4>🧭 Multi-View Encoding (Current Default)</h4>
+                <p>
+                    When enabled via <code>multi_view.enabled</code>, the same SigLIP encoder is applied to both
+                    frontal and lateral images (shared weights). Each view receives a learnable view embedding,
+                    and the two token streams are fused via concatenation + linear projection before the query
+                    attention modules. This keeps parameter growth minimal while injecting view identity.
+                </p>
             </div>
             
             <table>
@@ -1011,9 +1029,18 @@ Loss: Binary Cross-Entropy (multi-label)</pre>
                 </tr>
                 <tr>
                     <td>We Use</td>
-                    <td>Frontal only</td>
+                    <td>Paired Frontal + Lateral (default)</td>
                 </tr>
             </table>
+            <p>
+                Single-view operation is still supported by setting <code>filtering.require_both_views: false</code>
+                and using <code>filtering.projection_type</code> in <code>configs/data_config.yaml</code>.
+            </p>
+            <ul>
+                <li><code>filtering.projection_types</code>: ["Frontal", "Lateral"]</li>
+                <li><code>filtering.require_both_views</code>: true</li>
+                <li><code>model_config.multi_view.enabled</code>: true</li>
+            </ul>
             
             <h3>4.2 Data Splits</h3>
             <pre>
@@ -1088,6 +1115,10 @@ Why:
 Sampling:
 ├── Treat any positive label (except "No Finding") as abnormal
 └── Target ~50% abnormal per batch (configurable via data_config.yaml)</pre>
+            <p>
+                CheXbert scoring/labeling uses the <code>f1chexbert</code> package by default. The current
+                code does not load a local <code>chexbert.pth</code> unless you customize the labeler.
+            </p>
 
             <h3>4.6 Post-processing Guardrails</h3>
             <pre>
@@ -1182,19 +1213,9 @@ Hyperparameters:
 ├── Warmup Steps: 200
 ├── Loss Weights: generation=1.0, auxiliary=0.7
 └── Optimizer: AdamW (weight_decay=0.01)</pre>
-                <pre>
-Phase 1 Diagram:
-Images → SigLIP (frozen) → CLS + Patch Tokens
-                 │
-     Condition Queries + Anatomical Queries
-                 │
-          Cross-Attention (train)
-                 │
-           Gated Fusion (train)
-                 │
-   ┌─────────────┴─────────────┐
-   │                           │
-Aux Head (train)          Flan-T5 (frozen)</pre>
+                <div class="diagram-container">
+                    <img src="phase1.png" alt="Phase 1 Query Alignment Diagram" style="width:100%; max-width:900px; display:block; margin:0 auto;">
+                </div>
             </div>
             
             <!-- Phase 2 -->
@@ -1239,25 +1260,15 @@ Aux Head (train)          Flan-T5 (frozen)</pre>
                 
                 <pre>
 Hyperparameters:
-├── Batch Size: 8 (effective: 32 with grad accum)
+├── Batch Size: 4 (effective: 32 with grad accum 8)
 ├── Learning Rate: 3e-5
 ├── Warmup Steps: 500
 ├── Loss Weights: generation=1.0, auxiliary=0.3
 ├── Label Smoothing: 0.05
 └── Optimizer: AdamW</pre>
-                <pre>
-Phase 2 Diagram:
-Images → SigLIP (LoRA) → CLS + Patch Tokens
-                 │
-     Condition Queries + Anatomical Queries (train)
-                 │
-          Cross-Attention (train)
-                 │
-           Gated Fusion (train)
-                 │
-   ┌─────────────┴─────────────┐
-   │                           │
-Aux Head (train)          Flan-T5 (LoRA)</pre>
+                <div class="diagram-container">
+                    <img src="phase2.png" alt="Phase 2 End-to-End Fine-tuning Diagram" style="width:100%; max-width:900px; display:block; margin:0 auto;">
+                </div>
             </div>
             
             <!-- Phase 3 -->
@@ -1271,17 +1282,9 @@ Changes from Phase 2:
 ├── Vision Encoder: Fully frozen
 ├── Learning Rate: 2e-5 (lower)
 └── Focus: Text generation quality only</pre>
-                <pre>
-Phase 3 Diagram:
-Images → SigLIP (frozen) → CLS + Patch Tokens
-                 │
-   Condition/Anatomical Queries (train)
-                 │
-        Cross-Attention (train)
-                 │
-         Gated Fusion (train)
-                 │
-          Flan-T5 (train)</pre>
+                <div class="diagram-container">
+                    <img src="phase3.png" alt="Phase 3 Generation Fine-tuning Diagram" style="width:100%; max-width:900px; display:block; margin:0 auto;">
+                </div>
             </div>
             
             <h3>Training Infrastructure</h3>
@@ -1456,22 +1459,27 @@ Normalization Steps:
 │   ├── Smart quotes → straight quotes (' → ', " → ")
 │   ├── En-dash/em-dash → hyphen (– → -, — → -)
 │   └── Non-breaking space → regular space
-├── Remove punctuation (for fair tokenization)
-│   └── "normal." and "normal" → same token
+├── Optional punctuation removal (configurable)
+│   └── Default: keep punctuation (remove_punctuation: false)
 ├── Normalize whitespace
 ├── Tokenize with NLTK word_tokenize
 └── Skip invalid pairs (empty ref or hyp)
 
-Why remove punctuation?
+Why optionally remove punctuation?
 ├── "heart is normal." tokenizes to ["heart", "is", "normal", "."]
 ├── "heart is normal"  tokenizes to ["heart", "is", "normal"]
 ├── These are semantically identical but n-gram different!
-└── Removing punctuation ensures fair comparison</pre>
+└── Removal is available when you want stricter n-gram fairness</pre>
         </div>
         
         <!-- Section 8: Inference -->
         <div class="section" id="inference">
             <h2>8. Inference Pipeline</h2>
+            <p>
+                The default configuration expects paired frontal + lateral views. When
+                <code>filtering.require_both_views</code> is enabled, pass images in (frontal, lateral) order.
+                Single-view inference is supported by disabling that flag and using <code>filtering.projection_type</code>.
+            </p>
             
             <h3>8.1 Generation Process</h3>
             <pre>
@@ -1784,7 +1792,7 @@ python main.py generate \
   --train-config configs/train_config.yaml \
   --data-config configs/data_config.yaml \
   --eval-config configs/eval_config.yaml \
-  --images path/to/image_or_dir \
+  --images path/to/frontal.png path/to/lateral.png \
   --max-length 512 \
   --num-beams 4
 
@@ -1795,7 +1803,7 @@ python main.py visualize \
   --train-config configs/train_config.yaml \
   --data-config configs/data_config.yaml \
   --eval-config configs/eval_config.yaml \
-  --images path/to/image.png \
+  --images path/to/frontal.png path/to/lateral.png \
   --output-dir outputs/visualizations</pre>
             
             <div class="highlight-box">
