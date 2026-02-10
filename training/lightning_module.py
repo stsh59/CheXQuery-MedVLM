@@ -87,6 +87,11 @@ class CheXQueryLightningModule(pl.LightningModule):
         self.generation_weight = loss_config.get("generation_weight", 1.0)
         self.auxiliary_weight = loss_config.get("auxiliary_weight", 0.3)
         self.label_smoothing = loss_config.get("label_smoothing", 0.0)
+        # Gate regularization: penalise the gate for deviating from 0.5 so
+        # both CLS (global) and condition-query (local) signals flow to the
+        # decoder.  Without this the gate tends to suppress queries, starving
+        # the decoder of condition-specific information.
+        self.gate_reg_weight = loss_config.get("gate_reg_weight", 0.0)
         
         # Apply phase-specific freezing
         self._apply_phase_freezing()
@@ -155,12 +160,19 @@ class CheXQueryLightningModule(pl.LightningModule):
         self,
         generation_loss: torch.Tensor,
         auxiliary_loss: Optional[torch.Tensor],
+        gate_values: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Compute weighted total loss."""
+        """Compute weighted total loss including gate regularization."""
         total_loss = self.generation_weight * generation_loss
         
         if auxiliary_loss is not None and self.auxiliary_weight > 0:
             total_loss = total_loss + self.auxiliary_weight * auxiliary_loss
+        
+        # Gate regularization: push gate towards 0.5 so both global (CLS)
+        # and local (condition queries) information reach the decoder.
+        if gate_values is not None and self.gate_reg_weight > 0:
+            gate_reg = (gate_values - 0.5).pow(2).mean()
+            total_loss = total_loss + self.gate_reg_weight * gate_reg
         
         return total_loss
     
@@ -168,10 +180,11 @@ class CheXQueryLightningModule(pl.LightningModule):
         """Training step."""
         outputs = self.forward(batch)
         
-        # Compute total loss
+        # Compute total loss (includes gate regularisation when weight > 0)
         total_loss = self._compute_total_loss(
             outputs["generation_loss"],
             outputs["auxiliary_loss"],
+            gate_values=outputs.get("gate_values"),
         )
         
         # Logging
@@ -194,6 +207,7 @@ class CheXQueryLightningModule(pl.LightningModule):
         total_loss = self._compute_total_loss(
             outputs["generation_loss"],
             outputs["auxiliary_loss"],
+            gate_values=outputs.get("gate_values"),
         )
         
         # Logging

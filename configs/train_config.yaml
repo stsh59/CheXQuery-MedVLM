@@ -27,6 +27,7 @@ phase1:
     - "anatomical_queries"
     - "cross_attention"
     - "gated_fusion"
+    - "condition_to_decoder"
     - "auxiliary_head"
   
   # Optimizer
@@ -48,6 +49,7 @@ phase1:
     generation_weight: 1.0
     auxiliary_weight: 1.0
     label_smoothing: 0.0
+    gate_reg_weight: 0.1    # Push gate towards 0.5 to keep condition signals flowing
 
 # Phase 2: End-to-End Fine-tuning
 phase2:
@@ -72,6 +74,7 @@ phase2:
     - "anatomical_queries"
     - "cross_attention"
     - "gated_fusion"
+    - "condition_to_decoder"
     - "auxiliary_head"
     - "projection"
   
@@ -94,17 +97,20 @@ phase2:
     generation_weight: 1.0
     auxiliary_weight: 0.5
     label_smoothing: 0.05
+    gate_reg_weight: 0.1    # Push gate towards 0.5 to keep condition signals flowing
 
-# Phase 3: Generation Fine-tuning (Optional)
+# Phase 3: Generation Fine-tuning
 phase3:
   name: "generation_finetuning"
-  enabled: false
-  epochs: 15
-  batch_size: 8
-  gradient_accumulation_steps: 4
+  enabled: true
+  epochs: 10
+  batch_size: 4
+  gradient_accumulation_steps: 8
   effective_batch_size: 32
   
-  # Frozen modules
+  # Frozen modules — freeze vision encoder and auxiliary head.
+  # The condition_to_decoder projection stays trainable so the decoder
+  # can refine how it consumes condition information during generation.
   freeze:
     - "vision_encoder"
     - "auxiliary_head"
@@ -115,24 +121,29 @@ phase3:
     - "anatomical_queries"
     - "cross_attention"
     - "gated_fusion"
+    - "condition_to_decoder"
     - "text_decoder"
   
   # Optimizer
   optimizer:
     type: "adamw"
-    lr: 2.0e-5
+    lr: 1.0e-5
     weight_decay: 0.01
   
   # Scheduler
   scheduler:
-    type: "cosine"
+    type: "cosine_with_warmup"
+    warmup_steps: 200
     min_lr: 1.0e-7
   
-  # Loss weights
+  # Loss weights — generation-only; auxiliary is frozen.
+  # Gate reg stays at 0.0 because the gate should be well-calibrated
+  # by the end of Phase 2.
   loss:
     generation_weight: 1.0
     auxiliary_weight: 0.0
     label_smoothing: 0.1
+    gate_reg_weight: 0.0
 
 # Training settings
 training:

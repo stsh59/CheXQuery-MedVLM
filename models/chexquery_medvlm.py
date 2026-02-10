@@ -140,6 +140,17 @@ class CheXQueryMedVLM(nn.Module):
             dropout=dropout,
         )
         
+        # ============ Condition → Decoder Projection ============
+        # Projects condition embeddings into the same representation space as
+        # the gated-fusion output (which goes through output_projection +
+        # norm_output).  These projected embeddings are concatenated with the
+        # pooled visual tokens so the decoder's cross-attention has direct,
+        # un-diluted access to each condition's representation.
+        self.condition_to_decoder = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+        )
+        
         # ============ Text Decoder ============
         self.text_decoder = TextDecoder(
             model_name=decoder_model_name,
@@ -253,6 +264,15 @@ class CheXQueryMedVLM(nn.Module):
             query_embeddings=attended_queries,
         )
         
+        # Inject condition embeddings as additional encoder tokens for the
+        # text decoder.  The gated-fusion pooling compresses 20 queries into
+        # 10 tokens, which dilutes per-condition information.  By appending
+        # the 14 condition embeddings directly, the decoder's cross-attention
+        # can attend to each condition independently.
+        # visual_tokens: [batch, 11, hidden] -> [batch, 25, hidden]
+        condition_for_decoder = self.condition_to_decoder(condition_embeds)
+        visual_tokens = torch.cat([visual_tokens, condition_for_decoder], dim=1)
+        
         return visual_tokens, attn_weights, condition_embeds, gate_values
     
     def forward(
@@ -343,6 +363,11 @@ class CheXQueryMedVLM(nn.Module):
         """
         Generate reports from images.
         
+        Uses a condition-aware decoder prefix: the auxiliary head's predictions
+        are converted to a short text listing detected conditions, which is
+        prepended to the standard prompt template.  This explicitly guides
+        beam search to mention the detected pathologies.
+        
         Args:
             pixel_values: Input images [batch, 3, H, W]
             max_length: Maximum generation length
@@ -352,22 +377,50 @@ class CheXQueryMedVLM(nn.Module):
         Returns:
             List of generated report strings
         """
-        # Encode image
-        visual_tokens, _, _, _ = self.encode_image(
+        # Encode image (visual_tokens already include condition embeddings
+        # from Fix 1 — see encode_image)
+        visual_tokens, _, condition_embeds, _ = self.encode_image(
             pixel_values,
             pixel_values_lateral=pixel_values_lateral,
         )
         batch_size = visual_tokens.size(0)
         
-        # Build decoder prompt ids/mask to enforce output format
-        prompt_ids = self.text_decoder.tokenizer(
-            self.prompt_template,
-            return_tensors="pt",
-            add_special_tokens=False,
-        ).input_ids.to(visual_tokens.device)
-        # Expand prompt to batch
-        prompt_ids = prompt_ids.expand(batch_size, -1)
-        prompt_attn = torch.ones_like(prompt_ids, device=visual_tokens.device)
+        # --- Condition-aware prefix ---
+        # Run the auxiliary head to detect which conditions are present, then
+        # build a per-sample text prefix that lists them.
+        aux_logits = self.auxiliary_head(condition_embeds)
+        aux_probs = torch.sigmoid(aux_logits)
+        condition_names = self.get_condition_names()
+        
+        prompts: List[str] = []
+        for i in range(batch_size):
+            detected = [
+                name for j, name in enumerate(condition_names)
+                if name.lower() != "no finding" and aux_probs[i, j].item() > 0.5
+            ]
+            if detected:
+                prefix = "Detected conditions: " + ", ".join(detected) + ".\n"
+            else:
+                prefix = "No significant abnormalities detected.\n"
+            prompts.append(prefix + self.prompt_template)
+        
+        # Tokenize with LEFT padding so that all sequences end at the same
+        # position and T5's autoregressive generation appends correctly.
+        tokenizer = self.text_decoder.tokenizer
+        original_padding_side = tokenizer.padding_side
+        tokenizer.padding_side = "left"
+        try:
+            prompt_enc = tokenizer(
+                prompts,
+                return_tensors="pt",
+                padding=True,
+                add_special_tokens=False,
+            )
+        finally:
+            tokenizer.padding_side = original_padding_side
+        
+        prompt_ids = prompt_enc.input_ids.to(visual_tokens.device)
+        prompt_attn = prompt_enc.attention_mask.to(visual_tokens.device)
 
         # Generate text
         generated_texts = self.text_decoder.generate(
@@ -378,7 +431,7 @@ class CheXQueryMedVLM(nn.Module):
             decoder_attention_mask=prompt_attn,
             **kwargs,
         )
-        # Strip prompt template from outputs if it appears in the decoded text
+        # Strip prompt + condition prefix from decoded text
         return [self._strip_prompt_prefix(t) for t in generated_texts]
     
     @torch.no_grad()
