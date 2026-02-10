@@ -215,12 +215,45 @@ class ChestXrayDataset(Dataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def get_sampling_weights(self, target_abnormal_ratio: float = 0.5) -> Optional[List[float]]:
+    def get_sampling_weights(
+        self,
+        target_abnormal_ratio: float = 0.5,
+        strategy: str = "condition_aware",
+    ) -> Optional[List[float]]:
         """
-        Compute sampling weights to oversample abnormal cases.
+        Compute sampling weights for the training dataloader.
+
+        Strategies:
+          - "binary": Original binary normal/abnormal oversampling.
+          - "condition_aware": Weight each sample by the rarity of its
+            rarest positive condition. Samples with extremely rare diseases
+            (e.g. Atelectasis, Edema) get much higher sampling weight than
+            samples with only common labels (e.g. Support Devices). This
+            ensures the model sees rare pathologies more frequently.
+
+        Args:
+            target_abnormal_ratio: Target fraction for binary strategy.
+            strategy: Sampling strategy ("binary" or "condition_aware").
+
+        Returns:
+            List of per-sample weights, or None if not applicable.
         """
         if not self.samples:
             return None
+
+        num_samples = len(self.samples)
+
+        if strategy == "condition_aware":
+            return self._condition_aware_weights(num_samples)
+        else:
+            return self._binary_weights(num_samples, target_abnormal_ratio)
+
+    def _binary_weights(
+        self,
+        num_samples: int,
+        target_abnormal_ratio: float,
+    ) -> Optional[List[float]]:
+        """Original binary normal/abnormal oversampling."""
         abnormal_flags = []
         for sample in self.samples:
             uid_key = str(sample["uid"])
@@ -228,17 +261,89 @@ class ChestXrayDataset(Dataset):
             if labels is None:
                 abnormal_flags.append(False)
                 continue
-            # Treat any positive label except "No Finding" as abnormal
             abnormal_flags.append(any(labels[1:]))
-        total = len(abnormal_flags)
         abnormal_count = sum(abnormal_flags)
-        if abnormal_count == 0 or abnormal_count == total:
+        if abnormal_count == 0 or abnormal_count == num_samples:
             return None
-        abnormal_ratio = abnormal_count / total
+        abnormal_ratio = abnormal_count / num_samples
         target = min(max(target_abnormal_ratio, 0.01), 0.99)
         abnormal_weight = target / abnormal_ratio
         normal_weight = (1 - target) / (1 - abnormal_ratio)
-        weights = [abnormal_weight if flag else normal_weight for flag in abnormal_flags]
+        return [abnormal_weight if f else normal_weight for f in abnormal_flags]
+
+    def _condition_aware_weights(self, num_samples: int) -> Optional[List[float]]:
+        """
+        Condition-aware sampling: weight by inverse frequency of rarest
+        positive condition per sample.
+
+        For each of the 14 CheXbert labels, compute:
+            label_weight[i] = total_samples / (num_positive[i] + 1)
+
+        Each sample's weight = max(label_weight[i] for all positive labels i),
+        so rare-condition samples get much higher probability of being drawn.
+
+        "Support Devices"-only samples and normal samples get a baseline weight
+        of 1.0 so they are still represented but not over-sampled.
+        """
+        # Step 1: Compute per-label positive counts
+        num_labels = 14
+        label_counts = [0] * num_labels
+        sample_labels = []
+
+        for sample in self.samples:
+            uid_key = str(sample["uid"])
+            labels = self.chexbert_labels.get(uid_key)
+            if labels is None:
+                sample_labels.append(None)
+                continue
+            sample_labels.append(labels)
+            for i in range(num_labels):
+                if labels[i]:
+                    label_counts[i] += 1
+
+        # Step 2: Compute per-label inverse-frequency weight
+        label_weights = []
+        for count in label_counts:
+            if count > 0:
+                label_weights.append(num_samples / count)
+            else:
+                label_weights.append(1.0)
+
+        # Cap to prevent extreme outliers (max 50x)
+        max_weight = 50.0
+        label_weights = [min(w, max_weight) for w in label_weights]
+
+        # Step 3: Per-sample weight = max label_weight across positive labels
+        #   - For disease conditions (indices 1-12), use the max inverse freq
+        #   - "No Finding" (index 0) and "Support Devices" (index 13) are
+        #     common labels; we give them baseline weight of 1.0
+        #   - Samples with no labels get baseline weight of 1.0
+        baseline = 1.0
+        # Indices of true disease conditions (excluding No Finding=0, Support Devices=13)
+        disease_indices = list(range(1, 13))
+
+        weights = []
+        for labels in sample_labels:
+            if labels is None:
+                weights.append(baseline)
+                continue
+
+            # Check for disease conditions
+            disease_weights = [
+                label_weights[i] for i in disease_indices if labels[i]
+            ]
+            if disease_weights:
+                # Weight by the rarest condition this sample has
+                weights.append(max(disease_weights))
+            else:
+                # Normal or Support-Devices-only sample
+                weights.append(baseline)
+
+        # Normalize so mean weight = 1 (preserves effective epoch length)
+        mean_w = sum(weights) / len(weights)
+        if mean_w > 0:
+            weights = [w / mean_w for w in weights]
+
         return weights
     
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:

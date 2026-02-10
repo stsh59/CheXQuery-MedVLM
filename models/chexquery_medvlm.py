@@ -78,6 +78,10 @@ class CheXQueryMedVLM(nn.Module):
         # General
         hidden_dim: int = 768,
         dropout: float = 0.1,
+        # Auxiliary head focal loss
+        use_focal_loss: bool = False,
+        focal_gamma: float = 2.0,
+        focal_alpha: Optional[float] = None,
     ):
         super().__init__()
         
@@ -150,6 +154,9 @@ class CheXQueryMedVLM(nn.Module):
             hidden_dim=hidden_dim,
             num_classes=num_condition_queries,
             dropout=dropout,
+            use_focal_loss=use_focal_loss,
+            focal_gamma=focal_gamma,
+            focal_alpha=focal_alpha,
         )
         
         # Store tokenizer reference

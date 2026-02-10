@@ -48,6 +48,12 @@ class CheXQueryLightningModule(pl.LightningModule):
         # Get phase-specific config
         self.phase_config = training_config.get(f"phase{phase}", {})
         
+        # Focal loss configuration
+        focal_config = training_config.get("training", {}).get("focal_loss", {})
+        use_focal = focal_config.get("enabled", False)
+        focal_gamma = focal_config.get("gamma", 2.0)
+        focal_alpha = focal_config.get("alpha", None)
+
         # Build model
         self.model = CheXQueryMedVLM(
             vision_model_name=model_config.get("vision_encoder", {}).get("model_name", "google/siglip-base-patch16-384"),
@@ -68,6 +74,9 @@ class CheXQueryLightningModule(pl.LightningModule):
             prompt_template=prompt_template,
             hidden_dim=model_config.get("vision_encoder", {}).get("hidden_dim", 768),
             dropout=model_config.get("cross_attention", {}).get("dropout", 0.1),
+            use_focal_loss=use_focal,
+            focal_gamma=focal_gamma,
+            focal_alpha=focal_alpha,
         )
         
         # Label-specific auxiliary weights

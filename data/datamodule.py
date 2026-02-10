@@ -225,9 +225,14 @@ class ChestXrayDataModule(pl.LightningDataModule):
         sampler = None
         if self.sampling_config.get("enable", False):
             target_ratio = float(self.sampling_config.get("abnormal_ratio", 0.5))
-            weights = self.train_dataset.get_sampling_weights(target_ratio)
+            strategy = self.sampling_config.get("strategy", "condition_aware")
+            weights = self.train_dataset.get_sampling_weights(
+                target_abnormal_ratio=target_ratio,
+                strategy=strategy,
+            )
             if weights is not None:
                 sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
+                logger.info(f"Using {strategy} weighted sampling with {len(weights)} samples")
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,

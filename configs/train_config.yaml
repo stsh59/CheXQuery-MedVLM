@@ -46,7 +46,7 @@ phase1:
   # Loss weights
   loss:
     generation_weight: 1.0
-    auxiliary_weight: 0.7
+    auxiliary_weight: 1.0
     label_smoothing: 0.0
 
 # Phase 2: End-to-End Fine-tuning
@@ -92,7 +92,7 @@ phase2:
   # Loss weights
   loss:
     generation_weight: 1.0
-    auxiliary_weight: 0.3
+    auxiliary_weight: 0.5
     label_smoothing: 0.05
 
 # Phase 3: Generation Fine-tuning (Optional)
@@ -141,13 +141,34 @@ training:
   gradient_checkpointing: true
   num_workers: 2
   pin_memory: true
+  # Per-label pos_weight for auxiliary BCE loss.
+  # Computed from inverse class frequency on the IU X-ray train set
+  # (neg/pos ratio, capped at 10.0 to prevent gradient instability).
+  # These are applied via pos_weight= (NOT weight=) so only the
+  # positive-class loss is scaled, correcting for class imbalance.
   auxiliary_label_weights:
-    Cardiomegaly: 2.0
-    Pneumothorax: 2.5
-    Pleural Effusion: 2.5
-    Edema: 1.8
-    Consolidation: 1.8
-    Pneumonia: 1.8
+    No Finding: 10.0
+    Enlarged Cardiomediastinum: 8.0
+    Cardiomegaly: 8.9
+    Lung Opacity: 10.0
+    Lung Lesion: 10.0
+    Edema: 10.0
+    Consolidation: 10.0
+    Pneumonia: 10.0
+    Atelectasis: 10.0
+    Pneumothorax: 10.0
+    Pleural Effusion: 10.0
+    Pleural Other: 10.0
+    Fracture: 10.0
+    Support Devices: 1.3
+
+  # Focal loss configuration for auxiliary classification head.
+  # Focal loss down-weights easy (well-classified) examples so training
+  # concentrates on hard, misclassified ones -- critical for rare conditions.
+  focal_loss:
+    enabled: true
+    gamma: 2.0        # Focusing parameter (higher = more focus on hard examples)
+    alpha: null        # Global alpha balancing (null to disable; pos_weight handles it)
   
   # Checkpointing
   save_every_n_epochs: 1

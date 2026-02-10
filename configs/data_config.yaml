@@ -84,7 +84,12 @@ filtering:
   min_report_length: 10  # Minimum characters in report
   require_impression: true  # Require non-empty impression
 
-# Sampling
+# Sampling strategy for training dataloader.
+# "condition_aware" weights each sample by the rarity of its rarest
+# positive CheXbert condition, so rare diseases (Edema, Atelectasis,
+# Pleural Effusion, etc.) are sampled much more frequently.
+# "binary" is the legacy strategy that does simple normal/abnormal balancing.
 sampling:
   enable: true
-  abnormal_ratio: 0.5
+  strategy: "condition_aware"   # "condition_aware" or "binary"
+  abnormal_ratio: 0.5           # Only used when strategy="binary"
