@@ -67,8 +67,11 @@ tensorboard_logs/
 hf_cache/
 kaggle/
 kagglehub/
+mimic-cxr-dataset/
+mimic-cxr-dataset.zip
 *.csv
 !outputs/evaluation/*.csv
+outputs/chexbert_labels.json
 
 # OS generated files
 .DS_Store

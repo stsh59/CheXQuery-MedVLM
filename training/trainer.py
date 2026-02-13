@@ -64,7 +64,10 @@ def train_model(
     pl.seed_everything(seed, workers=True)
     
     # Data module
+    ds = data_config.get("dataset", {})
     datamodule = ChestXrayDataModule(
+        data_root=ds.get("data_root", "mimic-cxr-dataset"),
+        balanced_csv=ds.get("balanced_csv", "outputs/mimic_cxr_balanced.csv"),
         batch_size=phase_config.get("batch_size", 8),
         num_workers=training_settings.get("num_workers", 4),
         image_size=data_config.get("image", {}).get("size", 384),

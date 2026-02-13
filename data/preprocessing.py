@@ -264,6 +264,53 @@ def postprocess_generated_report(
     return output
 
 
+def parse_mimic_report_text(text: str) -> dict:
+    """
+    Parse FINDINGS and IMPRESSION sections from a MIMIC-CXR report.
+
+    MIMIC-CXR reports are free-text files with section headers such as
+    FINDINGS:, IMPRESSION:, INDICATION:, TECHNIQUE:, etc.  This function
+    extracts the two clinically relevant sections needed for report
+    generation training.
+
+    Args:
+        text: Raw report text read from a MIMIC-CXR ``.txt`` file.
+
+    Returns:
+        Dictionary with ``findings`` and ``impression`` string values.
+    """
+    sections: dict = {"findings": "", "impression": ""}
+    if not isinstance(text, str) or not text.strip():
+        return sections
+
+    # Common section headers that may follow FINDINGS / IMPRESSION
+    _next_section = (
+        r"IMPRESSION|RECOMMENDATION|NOTIFICATION|ATTESTATION|"
+        r"INDICATION|TECHNIQUE|COMPARISON|EXAMINATION|HISTORY|"
+        r"REASON|WET\s+READ|ADDENDUM|CLINICAL"
+    )
+
+    # Extract FINDINGS
+    findings_match = re.search(
+        r"FINDINGS?:\s*(.*?)(?=\n\s*(?:" + _next_section + r")\s*:|$)",
+        text,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if findings_match:
+        sections["findings"] = re.sub(r"\s+", " ", findings_match.group(1)).strip()
+
+    # Extract IMPRESSION
+    impression_match = re.search(
+        r"IMPRESSION:\s*(.*?)(?=\n\s*(?:" + _next_section.replace("IMPRESSION|", "") + r")\s*:|$)",
+        text,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if impression_match:
+        sections["impression"] = re.sub(r"\s+", " ", impression_match.group(1)).strip()
+
+    return sections
+
+
 def get_prompt_template() -> str:
     """Get the generation prompt template."""
     return """Generate a structured radiology report for this chest X-ray image.

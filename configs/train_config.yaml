@@ -153,25 +153,27 @@ training:
   num_workers: 2
   pin_memory: true
   # Per-label pos_weight for auxiliary BCE loss.
-  # Computed from inverse class frequency on the IU X-ray train set
-  # (neg/pos ratio, capped at 10.0 to prevent gradient instability).
+  # Estimated from inverse class frequency on the balanced MIMIC-CXR
+  # subset (~10K studies).  Because the subset is balanced, weights
+  # are much less extreme than the IU X-ray set.  Values are capped
+  # at 10.0 to prevent gradient instability.
   # These are applied via pos_weight= (NOT weight=) so only the
   # positive-class loss is scaled, correcting for class imbalance.
   auxiliary_label_weights:
-    No Finding: 10.0
-    Enlarged Cardiomediastinum: 8.0
-    Cardiomegaly: 8.9
-    Lung Opacity: 10.0
-    Lung Lesion: 10.0
-    Edema: 10.0
-    Consolidation: 10.0
-    Pneumonia: 10.0
-    Atelectasis: 10.0
-    Pneumothorax: 10.0
-    Pleural Effusion: 10.0
-    Pleural Other: 10.0
-    Fracture: 10.0
-    Support Devices: 1.3
+    No Finding: 2.0
+    Enlarged Cardiomediastinum: 4.0
+    Cardiomegaly: 3.0
+    Lung Opacity: 3.0
+    Lung Lesion: 5.0
+    Edema: 3.5
+    Consolidation: 4.0
+    Pneumonia: 5.0
+    Atelectasis: 3.0
+    Pneumothorax: 5.0
+    Pleural Effusion: 3.0
+    Pleural Other: 5.0
+    Fracture: 5.0
+    Support Devices: 1.5
 
   # Focal loss configuration for auxiliary classification head.
   # Focal loss down-weights easy (well-classified) examples so training

@@ -27,14 +27,36 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def balance_data(args):
+    """Create a balanced subset of the MIMIC-CXR dataset."""
+    logger.info("Creating balanced MIMIC-CXR subset ...")
+
+    from data.create_balanced_sample import create_balanced_sample_from_config
+    data_config = load_config(args.data_config)
+
+    output = create_balanced_sample_from_config(
+        data_config=data_config,
+        target_total=args.target_total,
+        output_path=args.output,
+        seed=args.seed,
+    )
+    logger.info(f"Balanced subset written to: {output}")
+    logger.info("Done!  Next steps:")
+    logger.info("  1. python main.py prepare   (create train/val/test splits)")
+    logger.info("  2. python main.py train --all-phases   (train the model)")
+
+
 def prepare_data(args):
-    """Prepare data splits and download dataset."""
-    logger.info("Preparing data...")
-    
+    """Prepare data splits (patient-level) from the balanced CSV."""
+    logger.info("Preparing data ...")
+
     from data.datamodule import ChestXrayDataModule
     data_config = load_config(args.data_config)
-    
+    ds = data_config.get("dataset", {})
+
     datamodule = ChestXrayDataModule(
+        data_root=ds.get("data_root", "mimic-cxr-dataset"),
+        balanced_csv=ds.get("balanced_csv", "outputs/mimic_cxr_balanced.csv"),
         batch_size=args.batch_size,
         splits_file=args.splits_file,
         text_output_template=data_config.get("text", {}).get("output_template"),
@@ -46,11 +68,11 @@ def prepare_data(args):
         processor_model=data_config.get("image", {}).get("processor_model"),
         sampling_config=data_config.get("sampling", {}),
     )
-    
-    # This will download data and create splits
+
+    # Verify dataset exists and create splits
     datamodule.prepare_data()
     datamodule.setup()
-    
+
     logger.info(f"Train samples: {len(datamodule.train_dataset)}")
     logger.info(f"Val samples: {len(datamodule.val_dataset)}")
     logger.info(f"Test samples: {len(datamodule.test_dataset)}")
@@ -378,6 +400,30 @@ def main():
         help="Path to eval config"
     )
     
+    # Balance dataset
+    balance_parser = subparsers.add_parser(
+        "balance",
+        parents=[common_parser],
+        help="Create balanced MIMIC-CXR subset"
+    )
+    balance_parser.add_argument(
+        "--target-total",
+        type=int,
+        default=None,
+        help="Target number of studies (default: from config)"
+    )
+    balance_parser.add_argument(
+        "--output",
+        default=None,
+        help="Output CSV path (default: from config)"
+    )
+    balance_parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed"
+    )
+
     # Prepare data
     prepare_parser = subparsers.add_parser(
         "prepare",
@@ -561,7 +607,9 @@ def main():
     logger.info("CheXQuery-MedVLM")
     logger.info("=" * 60)
     
-    if args.command == "prepare":
+    if args.command == "balance":
+        balance_data(args)
+    elif args.command == "prepare":
         prepare_data(args)
     elif args.command == "train":
         train(args)
